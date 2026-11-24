@@ -49,7 +49,8 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 75
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+      # 允许镜像升级：脚本会在 $DEVELOPER_DIR 不存在时自动挑选最新的 Xcode
+      PREFERRED_XCODE: /Applications/Xcode_26.4.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,8 +60,24 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [ -d "$PREFERRED_XCODE" ]; then
+            echo "DEVELOPER_DIR=$PREFERRED_XCODE" >> "$GITHUB_ENV"
+          else
+            latest="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1 || true)"
+            if [ -n "$latest" ]; then
+              echo "DEVELOPER_DIR=$latest/Contents/Developer" >> "$GITHUB_ENV"
+            else
+              xcode-select -p
+            fi
+          fi
+          echo "Using: $(xcode-select -p 2>/dev/null || echo default)"
+
       - name: Inspect Apple toolchain and install XcodeGen
         run: |
+          xcode-select -p
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
