@@ -1,0 +1,13 @@
+.gradle/
+.kotlin/
+**/build/
+build/
+dist/
+.DS_Store
+local.properties
+iosApp/*.xcodeproj/
+iosApp/*.xcworkspace/
+**/xcuserdata/
+**/.swiftpm/
+__pycache__/
+*.pyc

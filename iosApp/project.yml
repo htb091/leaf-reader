@@ -1,0 +1,108 @@
+name: LeafReader
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    exactVersion: 0.9.19
+  SwiftSoup:
+    url: https://github.com/scinfu/SwiftSoup.git
+    exactVersion: 2.7.7
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_ENABLE_MODULES: YES
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+targets:
+  LeafReader:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: Sources/Host
+      - path: Sources/Parser
+      - path: Assets.xcassets
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: ../licenses
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.leaf.reader
+        PRODUCT_NAME: LeafReader
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1.0"
+        SUPPORTED_PLATFORMS: iphoneos
+        SUPPORTS_MACCATALYST: NO
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/../shared/build/bin/iosArm64/releaseFramework"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-ObjC"
+          - "-lc++"
+          - "-lsqlite3"
+    dependencies:
+      # Prebuilt Kotlin static framework: link ONLY, never Embed Frameworks.
+      - framework: ../shared/build/bin/iosArm64/releaseFramework/Shared.framework
+        embed: false
+        link: true
+      - package: ZIPFoundation
+      - package: SwiftSoup
+      - sdk: UIKit.framework
+      - sdk: Metal.framework
+      - sdk: QuartzCore.framework
+      - sdk: CoreText.framework
+      - sdk: Security.framework
+  ParserTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    # Compile the same parser directly in a hostless XCTest bundle. No Shared,
+    # no app target dependency, and no device/simulator framework slice mismatch.
+    sources:
+      - path: Sources/Parser
+      - path: Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.leaf.reader.parser-tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+    dependencies:
+      - package: ZIPFoundation
+      - package: SwiftSoup
+schemes:
+  LeafReader:
+    build:
+      targets:
+        LeafReader: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  ParserTests:
+    build:
+      targets:
+        ParserTests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - name: ParserTests

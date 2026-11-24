@@ -1,0 +1,92 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leaf-reader-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared-tests:
+    name: Shared UI compilation and state tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate source package and wrapper
+        run: |
+          python3 scripts/check_project.py
+          python3 -m unittest discover -s scripts/tests -v
+          bash -n scripts/build-ios.sh scripts/test-ios.sh
+      - name: Compile shared UI and run Kotlin tests
+        run: bash ./gradlew :shared:desktopTest -PenableApple=false --stacktrace
+      - name: Upload Kotlin test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-test-reports
+          path: shared/build/reports/tests/
+          if-no-files-found: ignore
+
+  ios:
+    name: iOS 16+ arm64 unsigned IPA
+    needs: shared-tests
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Inspect Apple toolchain and install XcodeGen
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen --version
+      - name: Build application and package IPA
+        run: bash scripts/build-ios.sh
+      - name: Run native importer tests
+        run: bash scripts/test-ios.sh
+      - name: Upload IPA for TrollStore
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeafReader-iOS16-arm64-unsigned
+          path: |
+            dist/*.ipa
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: build/ParserTests.xcresult
+          if-no-files-found: ignore
+      - name: Build summary
+        run: |
+          echo '### Leaf Reader IPA' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Download the LeafReader-iOS16-arm64-unsigned artifact, unzip it, and open the IPA in TrollStore on a supported device.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This is an unsigned device build, not an App Store/TestFlight package. Android host, sync, TTS, images and original EPUB CSS are deferred.' >> "$GITHUB_STEP_SUMMARY"

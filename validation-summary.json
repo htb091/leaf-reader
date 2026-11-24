@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-24",
+  "shared_ui_compilation": "passed on JVM",
+  "kotlin_tests": {
+    "tests": 19,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "python_packaging_tests": 5,
+  "swift_tests_defined_not_run": 15,
+  "ios_build": "not run; requires GitHub macOS workflow",
+  "github_workflow": "configured, not dispatched",
+  "local_gradle": "8.14.3",
+  "ci_wrapper_gradle": "9.7.1"
+}
