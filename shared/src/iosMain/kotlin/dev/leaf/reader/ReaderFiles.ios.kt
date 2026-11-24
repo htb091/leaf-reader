@@ -2,6 +2,7 @@
 
 package dev.leaf.reader
 
+import kotlinx.cinterop.refTo
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
@@ -9,6 +10,9 @@ import platform.Foundation.NSString
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.create
+import platform.posix.fclose
+import platform.posix.fopen
+import platform.posix.fwrite
 import kotlin.time.Clock
 
 actual fun defaultReaderFiles(): ReaderFiles = IosReaderFiles()
@@ -36,8 +40,16 @@ private class IosReaderFiles : ReaderFiles {
     }
 
     override fun writeText(name: String, value: String) {
-        check(NSString.create(string = value).writeToFile(path(name), true, NSUTF8StringEncoding, null)) {
-            "写入本地书库失败。"
+        val file = path(name)
+        val bytes = value.encodeToByteArray()
+        val stream = fopen(file, "wb") ?: error("写入本地书库失败。")
+        try {
+            if (bytes.isNotEmpty()) {
+                val written = fwrite(bytes.refTo(0), 1uL, bytes.size.toULong(), stream)
+                check(written.toLong() == bytes.size.toLong()) { "写入本地书库失败。" }
+            }
+        } finally {
+            fclose(stream)
         }
     }
 
