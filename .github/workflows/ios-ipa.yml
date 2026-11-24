@@ -84,8 +84,6 @@ jobs:
           xcodegen --version
       - name: Build application and package IPA
         run: bash scripts/build-ios.sh
-      - name: Run native importer tests
-        run: bash scripts/test-ios.sh
       - name: Upload IPA for TrollStore
         uses: actions/upload-artifact@v4
         with:
@@ -95,6 +93,8 @@ jobs:
             dist/*.sha256
           if-no-files-found: error
           retention-days: 14
+      - name: Run native importer tests
+        run: bash scripts/test-ios.sh
       - name: Upload native test results
         if: always()
         uses: actions/upload-artifact@v4

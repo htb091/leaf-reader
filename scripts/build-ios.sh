@@ -21,5 +21,9 @@ xcodebuild \
 APP="$ROOT/build/ios/Build/Products/Release-iphoneos/LeafReader.app"
 test -f "$APP/LeafReader"
 plutil -lint "$APP/Info.plist"
-xcrun lipo -verify_arch arm64 "$APP/LeafReader"
+ARCHS="$(xcrun lipo -archs "$APP/LeafReader")"
+case "$ARCHS" in
+  *arm64*) printf 'Architectures: %s\n' "$ARCHS" ;;
+  *) printf 'Expected a thin arm64 binary, got: %s\n' "$ARCHS" >&2; exit 1 ;;
+esac
 python3 scripts/package_ipa.py --app "$APP" --output "$ROOT/dist/LeafReader-0.1.0-unsigned.ipa"
