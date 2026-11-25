@@ -246,7 +246,7 @@ final class StreamingImportTests: XCTestCase {
         do {
             let archive = try Archive(url: source, accessMode: .create)
             let payload = Data("hello".utf8)
-            try archive.addEntry(with: "stored.txt", type: .file, uncompressedSize: 5, compressionMethod: .none) { offset, size in
+            try archive.addEntry(with: "stored.txt", type: .file, uncompressedSize: Int64(5), compressionMethod: .none) { offset, size in
                 let start = Int(offset)
                 return payload.subdata(in: start..<min(start + size, payload.count))
             }
