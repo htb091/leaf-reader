@@ -1,5 +1,7 @@
 # LeafReader iOS host
 
+> v0.2 UPDATE: user-selected files now use the file-backed streaming importer and chapter manifest bridge. See [the current importer contract](<Sources/Parser/STREAMING_IMPORT.md>) and [upgrade notes](<../UPGRADE-v0.2.md>). The small in-memory limits/API descriptions below are retained as v0.1 fixture history, not the user-facing v0.2 file limits. Apple compilation and v0.2 tests are pending CI.
+
 Original Swift host and generated test fixtures for the project contract. No Legado code or book content is copied.
 
 ## Build requirements

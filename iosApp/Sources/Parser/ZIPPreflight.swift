@@ -1,8 +1,9 @@
 import Foundation
 
-// ZIPFoundation deliberately hides encryption flags and stops iteration on an
-// encrypted entry. Inspect every central + local header before using its API.
-// This is a narrow ZIP32 validator, not an alternative decompressor.
+// ZIPFoundation hides encrypted entries during iteration. Inspect every central
+// and local header first. File imports read only the EOCD tail and one bounded
+// header/extra field at a time; compressed payloads are never loaded here.
+// Narrow ZIP32 only: reject ZIP64, multi-volume and unsigned descriptors.
 struct ZIPPreflight {
     struct Record {
         let path: String
@@ -14,94 +15,134 @@ struct ZIPPreflight {
     let records: [String: Record]
 
     init(data: Data) throws {
-        guard data.count >= 22, data.count <= ImportLimits.fileBytes else { throw ImportFailure.malformedEPUB }
-        let first = max(0, data.count - 22 - 65_535)
-        var end: Int?
-        for offset in stride(from: data.count - 22, through: first, by: -1) {
-            if try data.zipU32(offset) == 0x06054b50,
-               offset + 22 + Int(try data.zipU16(offset + 20)) == data.count {
-                end = offset; break
+        try self.init(size: data.count, fileLimit: ImportLimits.fileBytes,
+                      entryLimit: ImportLimits.entryBytes, expandedLimit: ImportLimits.expandedBytes,
+                      entryCountLimit: ImportLimits.entries) { offset, length in
+            guard offset >= 0, length >= 0, offset <= data.count, length <= data.count - offset else {
+                throw ImportFailure.malformedEPUB
+            }
+            return data.subdata(in: offset..<offset + length)
+        }
+    }
+
+    init(fileURL: URL) throws {
+        let file = try FileHandle(forReadingFrom: fileURL)
+        defer { try? file.close() }
+        let length = try file.seekToEnd()
+        guard length <= UInt64(StreamingImportLimits.epubBytes) else { throw ImportFailure.oversized }
+        try self.init(size: Int(length), fileLimit: StreamingImportLimits.epubBytes,
+                      entryLimit: StreamingImportLimits.archiveEntryBytes,
+                      expandedLimit: StreamingImportLimits.expandedBytes,
+                      entryCountLimit: StreamingImportLimits.archiveEntries) { offset, count in
+            guard offset >= 0, count >= 0, offset <= Int(length), count <= Int(length) - offset else {
+                throw ImportFailure.malformedEPUB
+            }
+            try file.seek(toOffset: UInt64(offset))
+            var result = Data()
+            while result.count < count {
+                guard let bytes = try autoreleasepool(invoking: { try file.read(upToCount: count - result.count) }), !bytes.isEmpty else {
+                    throw ImportFailure.malformedEPUB
+                }
+                result.append(bytes)
+            }
+            return result
+        }
+    }
+
+    private init(size: Int, fileLimit: Int, entryLimit: Int, expandedLimit: Int,
+                 entryCountLimit: Int, read: (Int, Int) throws -> Data) throws {
+        guard size >= 22, size <= fileLimit else { throw ImportFailure.malformedEPUB }
+        let tailOffset = max(0, size - 22 - 65_535)
+        let tail = try read(tailOffset, size - tailOffset)
+        var found: Int?
+        for offset in stride(from: tail.count - 22, through: 0, by: -1) {
+            if try tail.zipU32(offset) == 0x06054b50,
+               offset + 22 + Int(try tail.zipU16(offset + 20)) == tail.count {
+                found = offset; break
             }
         }
-        guard let end else { throw ImportFailure.malformedEPUB }
-        let disk = try data.zipU16(end + 4)
-        let directoryDisk = try data.zipU16(end + 6)
-        let diskEntries = try data.zipU16(end + 8)
-        let count = Int(try data.zipU16(end + 10))
-        let directorySize = Int(try data.zipU32(end + 12))
-        let directoryOffset = Int(try data.zipU32(end + 16))
-        guard disk == 0, directoryDisk == 0, Int(diskEntries) == count,
-              count > 0, count <= ImportLimits.entries, count != 65_535,
-              directoryOffset <= end, directorySize == end - directoryOffset else {
+        guard let endInTail = found else { throw ImportFailure.malformedEPUB }
+        let end = tailOffset + endInTail
+        let disk = try tail.zipU16(endInTail + 4)
+        let directoryDisk = try tail.zipU16(endInTail + 6)
+        let diskEntries = Int(try tail.zipU16(endInTail + 8))
+        let count = Int(try tail.zipU16(endInTail + 10))
+        let directorySize = Int(try tail.zipU32(endInTail + 12))
+        let directoryOffset = Int(try tail.zipU32(endInTail + 16))
+        guard disk == 0, directoryDisk == 0, diskEntries == count,
+              count > 0, count <= entryCountLimit, count != 65_535,
+              directoryOffset <= end, directorySize == end - directoryOffset,
+              directorySize <= StreamingImportLimits.archiveMetadataBytes else {
             throw ImportFailure.archiveLimit
         }
         var cursor = directoryOffset
         var expandedTotal = 0
+        var metadataBytes = 0
         var result: [String: Record] = [:]
         var ranges: [Range<Int>] = []
         for _ in 0..<count {
-            guard cursor <= end - 46, try data.zipU32(cursor) == 0x02014b50 else { throw ImportFailure.malformedEPUB }
-            let needed = try data.zipU16(cursor + 6)
-            let flags = try data.zipU16(cursor + 8)
-            let method = try data.zipU16(cursor + 10)
-            let crc = try data.zipU32(cursor + 16)
-            let compressed = Int(try data.zipU32(cursor + 20))
-            let uncompressed = Int(try data.zipU32(cursor + 24))
-            let nameSize = Int(try data.zipU16(cursor + 28))
-            let extraSize = Int(try data.zipU16(cursor + 30))
-            let commentSize = Int(try data.zipU16(cursor + 32))
-            let startDisk = try data.zipU16(cursor + 34)
-            let attributes = try data.zipU32(cursor + 38)
-            let local = Int(try data.zipU32(cursor + 42))
-            guard flags & 0x2041 == 0 else { throw ImportFailure.encrypted } // traditional/strong/masked
+            guard cursor <= end - 46 else { throw ImportFailure.malformedEPUB }
+            let central = try read(cursor, 46)
+            guard try central.zipU32(0) == 0x02014b50 else { throw ImportFailure.malformedEPUB }
+            let needed = try central.zipU16(6)
+            let flags = try central.zipU16(8)
+            let method = try central.zipU16(10)
+            let crc = try central.zipU32(16)
+            let compressed = Int(try central.zipU32(20))
+            let uncompressed = Int(try central.zipU32(24))
+            let nameSize = Int(try central.zipU16(28))
+            let extraSize = Int(try central.zipU16(30))
+            let commentSize = Int(try central.zipU16(32))
+            let startDisk = try central.zipU16(34)
+            let attributes = try central.zipU32(38)
+            let localOffset = Int(try central.zipU32(42))
+            guard flags & 0x2041 == 0 else { throw ImportFailure.encrypted }
             guard needed < 45, startDisk == 0, method == 0 || method == 8,
-                  compressed <= ImportLimits.fileBytes,
-                  uncompressed <= ImportLimits.entryBytes,
-                  uncompressed <= ImportLimits.expandedBytes - expandedTotal,
+                  flags & ~UInt16(0x080e) == 0, method != 0 || compressed == uncompressed,
+                  compressed <= fileLimit, uncompressed <= entryLimit,
+                  uncompressed <= expandedLimit - expandedTotal,
                   uncompressed <= max(compressed, 1) * ImportLimits.compressionRatio else {
                 throw ImportFailure.archiveLimit
             }
             let next = cursor + 46 + nameSize + extraSize + commentSize
             guard nameSize > 0, nameSize <= 1_024, next <= end else { throw ImportFailure.malformedEPUB }
-            let nameData = data.subdata(in: cursor + 46..<cursor + 46 + nameSize)
-            // EPUB mandates UTF-8 entry names; ASCII names work with or without bit 11.
+            let nameData = try read(cursor + 46, nameSize)
             guard let path = String(data: nameData, encoding: .utf8) else { throw ImportFailure.unsafePath }
             try ArchivePath.validateEntry(path)
             guard result[path] == nil else { throw ImportFailure.unsafePath }
             let mode = (attributes >> 16) & 0xf000
             guard mode == 0 || mode == 0x8000 || mode == 0x4000 else { throw ImportFailure.unsafePath }
-            try Self.validateExtra(data, start: cursor + 46 + nameSize, length: extraSize)
-            guard local >= 0, local <= directoryOffset - 30,
-                  try data.zipU32(local) == 0x04034b50 else { throw ImportFailure.malformedEPUB }
-            let localFlags = try data.zipU16(local + 6)
+            try Self.validateExtra(try read(cursor + 46 + nameSize, extraSize))
+            guard localOffset <= directoryOffset - 30 else { throw ImportFailure.malformedEPUB }
+            let local = try read(localOffset, 30)
+            guard try local.zipU32(0) == 0x04034b50 else { throw ImportFailure.malformedEPUB }
+            let localFlags = try local.zipU16(6)
             guard localFlags & 0x2041 == 0 else { throw ImportFailure.encrypted }
-            let localNameSize = Int(try data.zipU16(local + 26))
-            let localExtraSize = Int(try data.zipU16(local + 28))
-            let contentOffset = local + 30 + localNameSize + localExtraSize
-            guard localFlags == flags, try data.zipU16(local + 8) == method,
-                  try data.zipU16(local + 4) < 45, localNameSize == nameSize,
-                  contentOffset <= directoryOffset, compressed <= directoryOffset - contentOffset,
-                  data.subdata(in: local + 30..<local + 30 + localNameSize) == nameData else {
-                throw ImportFailure.malformedEPUB
-            }
-            try Self.validateExtra(data, start: local + 30 + localNameSize, length: localExtraSize)
+            let localNameSize = Int(try local.zipU16(26))
+            let localExtraSize = Int(try local.zipU16(28))
+            let contentOffset = localOffset + 30 + localNameSize + localExtraSize
+            metadataBytes += 46 + nameSize + extraSize + commentSize + 30 + localNameSize + localExtraSize
+            // Entry retains central/local extras. Bound their aggregate as well
+            // as individual reads, before ZIPFoundation constructs those objects.
+            guard metadataBytes <= StreamingImportLimits.archiveMetadataBytes else { throw ImportFailure.archiveLimit }
+            guard localFlags == flags, try local.zipU16(8) == method, try local.zipU16(4) < 45,
+                  localNameSize == nameSize, contentOffset <= directoryOffset,
+                  compressed <= directoryOffset - contentOffset else { throw ImportFailure.malformedEPUB }
+            guard try read(localOffset + 30, localNameSize) == nameData else { throw ImportFailure.malformedEPUB }
+            try Self.validateExtra(try read(localOffset + 30 + localNameSize, localExtraSize))
             var contentEnd = contentOffset + compressed
             if flags & 8 != 0 {
-                // Only signed ZIP32 descriptors are supported; reject ambiguous records.
-                guard contentEnd <= directoryOffset - 16,
-                      try data.zipU32(contentEnd) == 0x08074b50,
-                      try data.zipU32(contentEnd + 4) == crc,
-                      Int(try data.zipU32(contentEnd + 8)) == compressed,
-                      Int(try data.zipU32(contentEnd + 12)) == uncompressed else {
-                    throw ImportFailure.malformedEPUB
-                }
+                guard contentEnd <= directoryOffset - 16 else { throw ImportFailure.malformedEPUB }
+                let descriptor = try read(contentEnd, 16)
+                guard try descriptor.zipU32(0) == 0x08074b50, try descriptor.zipU32(4) == crc,
+                      Int(try descriptor.zipU32(8)) == compressed,
+                      Int(try descriptor.zipU32(12)) == uncompressed else { throw ImportFailure.malformedEPUB }
                 contentEnd += 16
             } else {
-                guard try data.zipU32(local + 14) == crc,
-                      Int(try data.zipU32(local + 18)) == compressed,
-                      Int(try data.zipU32(local + 22)) == uncompressed else { throw ImportFailure.malformedEPUB }
+                guard try local.zipU32(14) == crc, Int(try local.zipU32(18)) == compressed,
+                      Int(try local.zipU32(22)) == uncompressed else { throw ImportFailure.malformedEPUB }
             }
-            ranges.append(local..<contentEnd)
+            ranges.append(localOffset..<contentEnd)
             expandedTotal += uncompressed
             result[path] = Record(path: path, compressedSize: compressed, uncompressedSize: uncompressed,
                                   checksum: crc, isDirectory: path.hasSuffix("/"))
@@ -118,18 +159,16 @@ struct ZIPPreflight {
         records = result
     }
 
-    private static func validateExtra(_ data: Data, start: Int, length: Int) throws {
-        var offset = start
-        let end = start + length
-        guard end <= data.count else { throw ImportFailure.malformedEPUB }
-        while offset < end {
-            guard offset <= end - 4 else { throw ImportFailure.malformedEPUB }
+    private static func validateExtra(_ data: Data) throws {
+        var offset = 0
+        while offset < data.count {
+            guard offset <= data.count - 4 else { throw ImportFailure.malformedEPUB }
             let kind = try data.zipU16(offset)
             let size = Int(try data.zipU16(offset + 2))
-            guard kind != 0x0001 else { throw ImportFailure.archiveLimit } // ZIP64
-            guard kind != 0x9901 else { throw ImportFailure.encrypted } // WinZip AES
+            guard kind != 0x0001 else { throw ImportFailure.archiveLimit }
+            guard kind != 0x9901 else { throw ImportFailure.encrypted }
             offset += 4 + size
-            guard offset <= end else { throw ImportFailure.malformedEPUB }
+            guard offset <= data.count else { throw ImportFailure.malformedEPUB }
         }
     }
 }
@@ -144,7 +183,6 @@ enum ArchivePath {
         let parts = body.split(separator: "/", omittingEmptySubsequences: false)
         guard !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { throw ImportFailure.unsafePath }
         if let decoded = path.removingPercentEncoding, decoded != path {
-            // Do not accept encoded separators, traversal components or control bytes.
             guard !decoded.contains("\\"), !decoded.contains(":"),
                   decoded.split(separator: "/", omittingEmptySubsequences: false).count == path.split(separator: "/", omittingEmptySubsequences: false).count,
                   !decoded.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }),

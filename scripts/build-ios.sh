@@ -26,4 +26,5 @@ case "$ARCHS" in
   *arm64*) printf 'Architectures: %s\n' "$ARCHS" ;;
   *) printf 'Expected a thin arm64 binary, got: %s\n' "$ARCHS" >&2; exit 1 ;;
 esac
-python3 scripts/package_ipa.py --app "$APP" --output "$ROOT/dist/LeafReader-0.1.0-unsigned.ipa"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+python3 scripts/package_ipa.py --app "$APP" --output "$ROOT/dist/LeafReader-${APP_VERSION}-unsigned.ipa"

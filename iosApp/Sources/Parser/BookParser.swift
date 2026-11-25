@@ -30,7 +30,8 @@ struct ImportedBook: Codable, Equatable {
     }
 }
 
-// All limits are enforced before crossing the Kotlin/Native boundary.
+// Legacy in-memory fixture limits. User-selected file imports instead use
+// StreamingImportLimits and never cross the bridge with all chapter text.
 enum ImportLimits {
     static let fileBytes = 32 * 1_024 * 1_024
     static let entryBytes = 8 * 1_024 * 1_024
@@ -52,7 +53,7 @@ enum ImportFailure: Error, LocalizedError {
         switch self {
         case .unsupported: return "请选择 TXT 或 EPUB 文件。"
         case .unreadable: return "文件读取失败，请重新从文件 App 选择。"
-        case .oversized: return "超过导入上限：文件 32 MiB、正文 UTF-8 12 MiB／UTF-16 8 Mi、章节 2000、段落 50000。"
+        case .oversized: return "超过导入上限：TXT 512 MiB、EPUB 1 GiB、章节 50000、段落 2000000；单章正文分块保存。"
         case .invalidText: return "文本编码异常；支持 UTF-8、带 BOM 的 UTF-16 和 GB18030。"
         case .empty: return "文件中没有可阅读的正文。"
         case .malformedEPUB: return "EPUB 结构或校验异常，请检查文件是否完整。"
@@ -66,6 +67,8 @@ enum ImportFailure: Error, LocalizedError {
 }
 
 struct BookParser {
+    // Legacy small-book adapter only. DocumentPicker uses parseFileToManifest.
+    @available(*, deprecated, message: "Use parseFileToManifest for document imports")
     func parseFile(at url: URL) throws -> ImportedBook {
         guard url.isFileURL else { throw ImportFailure.unreadable }
         let ext = url.pathExtension.lowercased()

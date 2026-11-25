@@ -1,62 +1,39 @@
-# 验证记录
+# v0.2 验证状态
 
-日期：2026-11-24。工程：叶读 v0.1.0 源码首版。
+日期：2026-11-25。
 
-## 已实际执行并通过
+## 本轮实际完成
 
-### 共享 UI 编译与 Kotlin 测试
+- 读取用户附带的编译复盘，以及现有 POSIX 文件写入、lipo -archs、Xcode 选择和产物上传顺序修复；未恢复已失效的 NSString.writeToFile 或 lipo -verify_arch。
+- 阅读器、书架、分章存储、Swift 流式导入的源码实现与逐文件静态复核。
+- Miuix 0.9.4 使用的组件 API 对照对应 tag 的真实源码核实。
+- 新增/更新回归测试源码：Kotlin 书库/manifest 33 例、分页/章节 14 例；原生流式导入新增13例，原15例导入测试保留。
+- 静态审查发现并修复总段数 Int 求和溢出、取消旧库迁移后索引偏移、索引写入失败后重启定位、未挂载滚动 state 等待首帧等问题，保留回归用例。
 
-在 Android 手机上的 Ubuntu / Linux aarch64、OpenJDK 17 环境执行：
+## 本轮未执行
 
-```text
-<本机已缓存的 Gradle 8.14.3>/bin/gradle :shared:desktopTest --no-daemon --console=plain
-BUILD SUCCESSFUL in 17s
-```
+执行器首次调用返回 `spawn bash ENOENT`；glob/ripgrep 子进程也失败。read/edit/write 可用。本轮没有重复尝试损坏的执行器，没有运行 Gradle、Swift/XCTest、打包或真机安装。测试用例数量不是通过数量。
 
-- Miuix 0.9.4 / CMP 1.12.0 的共享 UI 与实际 Kotlin 2.4.20 源码已编译。
-- 19 项 Kotlin 测试通过：13 项书库状态/存储/失败恢复测试，6 项阅读列表与索引契约测试。
-- 覆盖导入去重、阅读位置/设置重启恢复、位置夹取、打开取消、删除中打开、损坏索引保留、索引写入失败回滚、重新导入修复缺失副本和并发打开。
-- 最初 Gradle DSL 有自定义 desktopMain accessor 错误，已修复并重新完整编译验证。
-- 本机使用缓存 Gradle 8.14.3；仓库 wrapper 固定 9.7.1。两者不同，后者仍需 CI 验证。本机出现旧 Gradle 的弃用警告，不影响本次成功结果。
+v0.1 的成功构建和19项本地通过记录只适用于旧版本，不作为 v0.2 成功证明。v0.2 未产出现成 IPA。
 
-### IPA 封装和源码结构
+## Actions 必须验证
 
-```bash
-python3 scripts/check_project.py
-python3 -m unittest discover -s scripts/tests -v
-bash -n scripts/build-ios.sh scripts/test-ios.sh
-python3 -m compileall -q scripts
-```
+1. 标准库升级器可解析、路径预检、源码备份和全量源码 ZIP 生成。
+2. JVM 共享 UI 编译和全部 Kotlin 回归测试。
+3. Apple iOS 源集/静态框架编译、Swift 编译、App 链接与 IPA 封装。
+4. 28 项原生导入测试（原15+新增13，实际数量以 XCTest 报告为准）。
+5. IPA 产物在原生测试之前上传；测试失败仍应保留已成功构建的 IPA，但工作流会标记失败。
 
-5 项 Python 测试通过：Payload 路径、可执行权限、拒绝模拟器包、缺失主程序、越界 symlink 与输出路径保护（其中一项组合检查）。这些使用合成 Mach-O 头 fixture，不是生成了真实可运行 iOS App。
+## iOS16 真机验收
 
-其他静态检查：
+- 覆盖安装、保留 Bundle ID，不先卸载；旧书库进度与分章迁移保持原文位置。
+- Miuix书架折叠大标题、搜索、网格/列表/紧凑布局、设置切换保存。
+- 横滑/瞬翻/滚动、单栏/双栏/旋转、目录和前后章连续性。
+- 中央点击显示/收起工具栏，5秒自动隐藏可关闭，叠层不改分页。
+- 字体/字号/行距改变后的文字锚点恢复，辅助字号、emoji、空章、极长段落。
+- 大于32MiB TXT实测内存与导入时间；512MiB/1GiB是校验上限，不等于已通过该体积压力测试。
+- 来回切换应用、导入过程中停止/空间不足、损坏中间章节、重启后状态恢复。
 
-- Gradle wrapper JAR SHA-256、分发 checksum 配置。
-- Actions YAML、手动触发入口、只读权限及 job 依赖。
-- XcodeGen YAML、iOS16 部署目标、Shared 静态框架只链接不嵌入。
-- Info.plist 解析、Compose 帧率设置、文件类型声明。
-- 原创图标 PNG 尺寸、RGB 无透明通道和 asset slots。
-- 源码包本地链接与文件完整性检查。
+## 已知边界
 
-## 尚未实际执行
-
-- GitHub 远端工作流：当前没有连接用户仓库，也没有推送代码。
-- macOS 上的 Kotlin/Native iOS framework 编译。
-- Swift 编译、Xcode app 链接、15 项原生 importer XCTest。
-- 真正 IPA 生成、签名/巨魔安装及 iOS16 真机运行。
-- 文件提供器、后台中断、大文件内存、VoiceOver 和触摸阅读体验。
-- Android 宿主、APK、WebDAV、TTS 等后续功能。
-
-CI 选择 macOS 26 / Xcode 26.4：依据 [KMP 兼容表](https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html)及 [runner 镜像清单](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md)。这属于依据文档配置，不是该镜像已运行成功的证明。
-
-## 首轮 Actions 验收
-
-1. shared-tests job 通过。
-2. linkReleaseFrameworkIosArm64 通过，Apple 平台源真实编译。
-3. XcodeGen / Swift / 链接通过。
-4. ParserTests 15 项通过。
-5. artifact 内有 IPA 和 SHA-256。
-6. 在兼容 TrollStore 的 iOS16 真机打开：导入示例 TXT/EPUB → 阅读 → 改字号 → 目录跳转 → 返回 → 再打开 → 后台/前台 → 重启恢复。
-
-仅前五项通过也不代表第六项自动通过。首轮原生错误应以 CI 实际日志修复，而不是把本地 JVM 成功等同为 iOS 全部成功。
+EPUB仍是纯文本导入，不保留完整CSS/图片；ZIP64、DRM、过大单个XHTML和不规范HTML有明确兼容限制。过程终止或索引提交失败可能留下未被当前索引引用的章节修订副本；有效草稿保留便于重试，尚无完整磁盘垃圾回收界面。Canvas辅助朗读、字体fallback与真机触控待验收。

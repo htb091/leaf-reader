@@ -2,66 +2,54 @@ package dev.leaf.reader.ui
 
 import dev.leaf.reader.BookChapter
 import dev.leaf.reader.BookDocument
-import dev.leaf.reader.ReadingProgress
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/** Replaces legacy whole-book flattening tests with the chapter-local coordinate contract. */
 class ReadingItemsTest {
-    private fun document(vararg chapters: BookChapter) = BookDocument(
-        id = "a".repeat(64), title = "测试书籍", chapters = chapters.toList(),
-    )
-
-    @Test
-    fun headingsAndParagraphsKeepExactSpineOrder() {
-        val items = readingItems(document(
-            BookChapter("第一章", listOf("甲", "乙")),
-            BookChapter("第二章", listOf("丙")),
-        ))
-        assertEquals(listOf("第一章", "甲", "乙", "第二章", "丙"), items.map { it.text })
-        assertEquals(listOf(true, false, false, true, false), items.map { it.isHeading })
-        assertEquals(listOf(0, 0, 0, 1, 1), items.map { it.chapterIndex })
+    @Test fun headingAndParagraphsKeepExactLocalOrder() {
+        val texts = chapterReadingTexts(BookChapter("第一章", listOf("甲", "乙")), 0)
+        assertEquals(listOf("第一章", "甲", "乙"), texts)
+        assertEquals("甲", texts[TextAnchor(paragraphIndex = 1).paragraphIndex])
     }
 
-    @Test
-    fun emptyChapterStillOccupiesOneHeadingIndex() {
-        val items = readingItems(document(
-            BookChapter("序", emptyList()),
-            BookChapter("正文", listOf("段落")),
-        ))
-        assertEquals(3, items.size)
-        assertEquals("正文", items[1].text)
-        assertEquals("段落", items[2].text)
-        assertTrue(items[0].isHeading)
+    @Test fun titleOnlyMetadataNeverSuppliesBodyText() {
+        val metadata = BookDocument(id = "a".repeat(64), title = "测试书籍", chapters =
+            listOf(BookChapter("第一章", emptyList()), BookChapter("第二章", emptyList())))
+        val loaded = BookChapter("第二章", listOf("当前章正文"))
+        val texts = chapterReadingTexts(loaded, 1)
+        assertEquals(listOf("第二章", "当前章正文"), texts)
+        assertTrue(metadata.chapters.all { it.paragraphs.isEmpty() })
+        assertEquals(TextAnchor(1, 2), clampAnchor(texts, TextAnchor(1, 2)))
     }
 
-    @Test
-    fun blankTitlesGetReadableFallbackWithoutAddingItems() {
-        val items = readingItems(document(BookChapter("  ", listOf("原文"))))
-        assertEquals("第 1 章", items[0].text)
-        assertEquals(2, items.size)
-        assertEquals("原文", items[1].text)
+    @Test fun emptyChapterStillOccupiesOneHeadingIndex() {
+        assertEquals(listOf("序"), chapterReadingTexts(BookChapter("序", emptyList()), 0))
     }
 
-    @Test
-    fun blankAndDuplicateParagraphsAreNotDroppedOrMerged() {
-        val items = readingItems(document(BookChapter("章", listOf("", "重复", "重复"))))
-        assertEquals(listOf("章", "", "重复", "重复"), items.map { it.text })
-        assertFalse(items[1].isHeading)
-        assertFalse(items[3].isHeading)
+    @Test fun blankTitlesGetReadableFallbackWithoutAddingItems() {
+        val texts = chapterReadingTexts(BookChapter("  ", listOf("原文")), 7)
+        assertEquals(listOf("第 8 章", "原文"), texts)
     }
 
-    @Test
-    fun persistedIndexAddressesSameParagraphAfterFlatteningAgain() {
-        val book = document(BookChapter("一", listOf("甲", "乙")), BookChapter("二", listOf("丙")))
-        val progress = ReadingProgress(itemIndex = 4, scrollOffset = 48)
-        assertEquals("丙", readingItems(book)[progress.itemIndex].text)
-        assertEquals(readingItems(book)[progress.itemIndex], readingItems(book.copy())[progress.itemIndex])
+    @Test fun blankAndDuplicateParagraphsAreNotDroppedOrMerged() {
+        assertEquals(listOf("章", "", "重复", "重复"),
+            chapterReadingTexts(BookChapter("章", listOf("", "重复", "重复")), 0))
     }
 
-    @Test
-    fun emptyDocumentProducesNoSyntheticReadingItem() {
-        assertTrue(readingItems(document()).isEmpty())
+    @Test fun localAnchorStillAddressesSameTextAfterRecreatingChapter() {
+        val chapter = BookChapter("第二章", listOf("甲乙", "丙丁😀"))
+        val anchor = TextAnchor(paragraphIndex = 2, characterOffset = 2)
+        val before = chapterReadingTexts(chapter, 1)
+        val after = chapterReadingTexts(chapter.copy(paragraphs = chapter.paragraphs.toList()), 1)
+        assertEquals(before[anchor.paragraphIndex].substring(anchor.characterOffset),
+            after[anchor.paragraphIndex].substring(anchor.characterOffset))
+        assertEquals("😀", after[anchor.paragraphIndex].substring(anchor.characterOffset))
+    }
+
+    @Test fun endOfChapterRequestClampsAfterBodyLoad() {
+        val texts = chapterReadingTexts(BookChapter("章", listOf("尾😀")), 0)
+        assertEquals(TextAnchor(1, 3), clampAnchor(texts, TextAnchor(Int.MAX_VALUE, Int.MAX_VALUE)))
     }
 }

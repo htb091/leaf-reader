@@ -3,9 +3,34 @@ import ZIPFoundation
 import SwiftSoup
 
 struct EPUBParser {
+    // The in-memory API remains restricted to the original small test fixtures.
     func parse(data: Data, id: String, fallbackTitle: String) throws -> ImportedBook {
         let preflight = try ZIPPreflight(data: data)
         let archive = try Archive(data: data, accessMode: .read)
+        var builder = ChapterBuilder(defaultTitle: fallbackTitle)
+        let metadata = try parseArchive(archive, preflight: preflight, fallbackTitle: fallbackTitle,
+                                        expandedLimit: ImportLimits.expandedBytes) { title, paragraphs in
+            try builder.startChapter(title)
+            for paragraph in paragraphs { try builder.addParagraph(paragraph) }
+        }
+        return ImportedBook(id: id, title: metadata.title, author: metadata.author,
+                            format: "EPUB", chapters: try builder.finish())
+    }
+
+    func parseFile(at url: URL, writer: ChapterFileWriter) throws -> (title: String, author: String) {
+        let preflight = try ZIPPreflight(fileURL: url)
+        // Crucially this is the URL-backed initializer, not Archive(data:).
+        let archive = try Archive(url: url, accessMode: .read)
+        return try parseArchive(archive, preflight: preflight, fallbackTitle: url.deletingPathExtension().lastPathComponent,
+                                expandedLimit: StreamingImportLimits.expandedBytes) { title, paragraphs in
+            try writer.startChapter(title)
+            for paragraph in paragraphs { try writer.addParagraph(paragraph) }
+        }
+    }
+
+    private func parseArchive(_ archive: Archive, preflight: ZIPPreflight, fallbackTitle: String,
+                              expandedLimit: Int,
+                              emit: (String, [String]) throws -> Void) throws -> (title: String, author: String) {
         var entries: [String: Entry] = [:]
         for entry in archive {
             guard let checked = preflight.records[entry.path], entry.type != .symlink,
@@ -16,7 +41,7 @@ struct EPUBParser {
             entries[entry.path] = entry
         }
         guard entries.count == preflight.records.count else { throw ImportFailure.malformedEPUB }
-        var reader = EntryReader(archive: archive, entries: entries)
+        var reader = EntryReader(archive: archive, entries: entries, expandedLimit: expandedLimit)
         let mimetype = try reader.read("mimetype", limit: 64)
         guard String(data: mimetype, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "application/epub+zip" else {
             throw ImportFailure.malformedEPUB
@@ -30,7 +55,6 @@ struct EPUBParser {
         guard !package.fixedLayout else { throw ImportFailure.unsupportedLayout }
         guard !package.spine.isEmpty else { throw ImportFailure.malformedEPUB }
         let title = package.bookTitle.isEmpty ? fallbackTitle : package.bookTitle
-        var builder = ChapterBuilder(defaultTitle: title)
         var linear = package.spine.filter { $0.linear }
         // A book with only non-linear entries has no primary reading order.
         if linear.isEmpty { linear = package.spine }
@@ -44,29 +68,31 @@ struct EPUBParser {
             let path = try ArchivePath.resolve(item.href, relativeTo: packagePath)
             // Duplicate spine references otherwise inflate the output and repeat chapters.
             guard seen.insert(path).inserted else { throw ImportFailure.malformedEPUB }
-            let chapterData = try reader.read(path, limit: ImportLimits.entryBytes)
-            let markup = try TextDecoding.decode(chapterData, allowGB18030: false)
-            // EPUB content documents are XHTML. Validate depth/node budgets first;
-            // external DTD resolution is disabled even for EPUB2 XHTML doctypes.
-            try PackageXML(mode: .content).parse(chapterData)
-            let document = try SwiftSoup.parse(markup)
-            try document.select("script,style,noscript,iframe,object,embed,svg,math,img,picture,audio,video,canvas,link,template").remove()
-            guard let body = document.body() else { throw ImportFailure.empty }
-            let heading = try body.select("h1,h2,h3").first()?.text() ?? ""
-            let chapterTitle = heading.isEmpty ? "第 \(seen.count) 章" : String(heading.prefix(240))
-            try builder.startChapter(chapterTitle)
-            let visitor = PlainTextVisitor()
-            try body.traverse(visitor)
-            for paragraph in visitor.paragraphs { try builder.addParagraph(paragraph) }
+            // Drain Foundation/SwiftSoup temporaries after EACH document, not
+            // after the entire book. The one-document 8MiB ceiling is deliberate.
+            try autoreleasepool {
+                let chapterData = try reader.read(path, limit: StreamingImportLimits.xhtmlBytes)
+                let markup = try TextDecoding.decode(chapterData, allowGB18030: false)
+                // Validate depth/node budgets without resolving external DTDs.
+                try PackageXML(mode: .content).parse(chapterData)
+                let document = try SwiftSoup.parse(markup)
+                try document.select("script,style,noscript,iframe,object,embed,svg,math,img,picture,audio,video,canvas,link,template").remove()
+                guard let body = document.body() else { throw ImportFailure.empty }
+                let heading = try body.select("h1,h2,h3").first()?.text() ?? ""
+                let chapterTitle = heading.isEmpty ? "第 \(seen.count) 章" : boundedTitle(heading)
+                let visitor = PlainTextVisitor()
+                try body.traverse(visitor)
+                try emit(chapterTitle, visitor.paragraphs)
+            }
         }
-        let chapters = try builder.finish()
-        return ImportedBook(id: id, title: title, author: package.author, format: "EPUB", chapters: chapters)
+        return (boundedTitle(title), package.author)
     }
 }
 
 private struct EntryReader {
     let archive: Archive
     let entries: [String: Entry]
+    let expandedLimit: Int
     var consumed = 0
 
     mutating func read(_ path: String, limit: Int) throws -> Data {
@@ -76,7 +102,7 @@ private struct EntryReader {
         var newConsumed = consumed
         let checksum = try archive.extract(entry, bufferSize: 16 * 1_024, skipCRC32: false) { chunk in
             guard chunk.count <= limit - data.count,
-                  chunk.count <= ImportLimits.expandedBytes - newConsumed else { throw ImportFailure.archiveLimit }
+                  chunk.count <= expandedLimit - newConsumed else { throw ImportFailure.archiveLimit }
             newConsumed += chunk.count
             data.append(chunk)
         }
@@ -149,7 +175,7 @@ private final class PackageXML: NSObject, XMLParserDelegate {
             manifest[id] = ManifestItem(href: href, mediaType: media)
         }
         if name == "itemref", stack.dropLast().last == "spine" {
-            guard let id = attributes["idref"], spine.count < ImportLimits.chapters else {
+            guard let id = attributes["idref"], spine.count < StreamingImportLimits.chapters else {
                 fail(parser, ImportFailure.malformedEPUB); return
             }
             spine.append(SpineItem(id: id, linear: attributes["linear"]?.lowercased() != "no",

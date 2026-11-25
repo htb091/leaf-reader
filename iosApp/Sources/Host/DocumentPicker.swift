@@ -55,11 +55,11 @@ final class ImportCoordinator: ObservableObject {
             queue.async { [weak self] in
                 let result: Result<String, Error> = autoreleasepool {
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    return Result { try BookParser().parseFile(at: url).json() }
+                    return Result { try BookParser().parseFileToManifest(at: url) }
                 }
                 DispatchQueue.main.async {
                     switch result {
-                    case .success(let json): ReaderRuntime.shared.importBook(json: json)
+                    case .success(let json): ReaderRuntime.shared.importManifest(json: json)
                     case .failure(let error):
                         // Never send OS errors, archive paths, or book text to logs/UI.
                         let message = (error as? ImportFailure)?.errorDescription ?? "导入失败：文件结构异常或读取中断。"

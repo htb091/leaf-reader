@@ -32,10 +32,11 @@ class ReaderStoreTest {
         store.openBook(sample.id)
         advanceUntilIdle()
         store.updateProgress(3, 42)
+        advanceUntilIdle() // The legacy adapter loads a different chapter asynchronously.
         store.importBookJson(sample.encoded())
         advanceUntilIdle()
         assertEquals(1, store.state.value.books.size)
-        assertEquals(ReadingProgress(3, 42), store.state.value.currentProgress)
+        assertProgress(store.state.value.currentProgress, item = 3, scroll = 42, chapter = 1, paragraph = 0)
     }
 
     @Test fun positionAndSettingsSurviveRestart() = runTest {
@@ -50,7 +51,7 @@ class ReaderStoreTest {
         assertEquals(25f, restored.state.value.settings.fontSize)
         assertEquals(ReaderTheme.SEPIA, restored.state.value.settings.theme)
         restored.openBook(sample.id); advanceUntilIdle()
-        assertEquals(ReadingProgress(2, 75), restored.state.value.currentProgress)
+        assertProgress(restored.state.value.currentProgress, item = 2, scroll = 75, chapter = 0, paragraph = 2)
     }
 
     @Test fun clampsInvalidProgressToExistingItems() = runTest {
@@ -58,7 +59,8 @@ class ReaderStoreTest {
         store.importBookJson(sample.encoded()); advanceUntilIdle()
         store.openBook(sample.id); advanceUntilIdle()
         store.updateProgress(9999, -3)
-        assertEquals(ReadingProgress(4, 0), store.state.value.currentProgress)
+        advanceUntilIdle()
+        assertProgress(store.state.value.currentProgress, item = 4, scroll = 0, chapter = 1, paragraph = 1)
     }
 
     @Test fun closingBeforeOpenFinishesDoesNotReopen() = runTest {
@@ -90,6 +92,8 @@ class ReaderStoreTest {
         store.deleteBook(sample.id); advanceUntilIdle()
         assertTrue(store.state.value.books.isEmpty())
         assertNull(files.values["book-${sample.id}.json"])
+        assertNull(files.values["book-${sample.id}.manifest.json"])
+        assertTrue(files.values.keys.none { it.startsWith("book-${sample.id}-") })
         assertEquals("keep", files.values["unrelated"])
     }
 
@@ -131,12 +135,15 @@ class ReaderStoreTest {
         val store = ReaderStore(files, this, StandardTestDispatcher(testScheduler))
         store.importBookJson(sample.encoded()); advanceUntilIdle()
         store.openBook(sample.id); advanceUntilIdle()
-        store.updateProgress(2, 7); store.closeBook()
-        files.values.remove("book-${sample.id}.json")
+        store.updateProgress(2, 7)
+        val missingChapter = store.state.value.manifest!!.chapters[0].fileName
+        store.closeBook()
+        files.values.remove(missingChapter)
         store.importBookJson(sample.encoded()); advanceUntilIdle()
         store.openBook(sample.id); advanceUntilIdle()
         assertNotNull(store.state.value.currentBook)
-        assertEquals(ReadingProgress(2, 7), store.state.value.currentProgress)
+        assertProgress(store.state.value.currentProgress, item = 2, scroll = 7, chapter = 0, paragraph = 2)
+        assertNotNull(store.state.value.chapter)
     }
 
     @Test fun rapidOpeningKeepsLatestBook() = runTest {
@@ -162,8 +169,91 @@ class ReaderStoreTest {
         assertEquals(sample.id, store.state.value.currentBook?.id)
     }
 
+    @Test fun chapterAnchorsPersistAcrossAsyncNavigationAndRestart() = runTest {
+        val files = MemoryFiles()
+        val store = ReaderStore(files, this, StandardTestDispatcher(testScheduler))
+        store.importBookJson(sample.encoded()); advanceUntilIdle()
+        store.openBook(sample.id); advanceUntilIdle()
+        store.updateChapterProgress(paragraphIndex = 2, characterOffset = 5, scrollOffset = 11)
+        // UTF-16 index 5 bisects the emoji and must move back to the high surrogate.
+        assertProgress(store.state.value.currentProgress, 2, 11, 0, 2, character = 4)
+        store.selectChapter(1)
+        assertTrue(store.state.value.chapterBusy)
+        assertNull(store.state.value.chapter)
+        store.updateChapterProgress(0, 0, 0) // Initial/unmeasured UI saves must be ignored.
+        assertProgress(store.state.value.books.single().progress, 2, 11, 0, 2, character = 4)
+        advanceUntilIdle()
+        assertEquals("第二章", store.state.value.chapter?.title)
+        store.updateChapterProgress(1, 2, 9)
+        store.flush()
+        val restored = ReaderStore(files, this, StandardTestDispatcher(testScheduler))
+        restored.openBook(sample.id); advanceUntilIdle()
+        assertEquals(1, restored.state.value.chapterIndex)
+        assertFalse(restored.state.value.chapterBusy)
+        assertProgress(restored.state.value.currentProgress, 4, 9, 1, 1, character = 2)
+        assertProgress(restored.state.value.books.single().progress, 4, 9, 1, 1, character = 2)
+    }
+
+    @Test fun previousChapterAtEndClampsSentinelAfterBodyLoads() = runTest {
+        val store = ReaderStore(MemoryFiles(), this, StandardTestDispatcher(testScheduler))
+        store.importBookJson(sample.encoded()); advanceUntilIdle()
+        store.openBook(sample.id); advanceUntilIdle()
+        store.selectChapter(1); advanceUntilIdle()
+        store.selectChapter(0, atEnd = true)
+        assertTrue(store.state.value.chapterBusy)
+        assertEquals(Int.MAX_VALUE, store.state.value.currentProgress.characterOffset)
+        advanceUntilIdle()
+        assertProgress(store.state.value.currentProgress, 2, 0, 0, 2,
+            character = sample.chapters[0].paragraphs.last().length)
+    }
+
+    @Test fun rapidChapterSelectionAndCloseDiscardObsoleteLoads() = runTest {
+        val store = ReaderStore(MemoryFiles(), this, StandardTestDispatcher(testScheduler))
+        store.importBookJson(sample.encoded()); advanceUntilIdle()
+        store.openBook(sample.id); advanceUntilIdle()
+        store.selectChapter(1)
+        store.selectChapter(0)
+        advanceUntilIdle()
+        assertEquals("第一章", store.state.value.chapter?.title)
+        assertProgress(store.state.value.currentProgress, 0, 0, 0, 0)
+        store.selectChapter(1)
+        store.closeBook()
+        advanceUntilIdle()
+        assertNull(store.state.value.currentBook)
+        assertNull(store.state.value.manifest)
+        assertNull(store.state.value.chapter)
+        assertFalse(store.state.value.chapterBusy)
+        assertFalse(store.state.value.busy)
+    }
+
+    @Test fun allReadingAndShelfOptionsSurviveRestart() = runTest {
+        val files = MemoryFiles()
+        val settings = ReaderSettings(
+            fontSize = 27f, lineHeight = 2f, theme = ReaderTheme.DARK,
+            readingMode = ReadingMode.INSTANT, columnMode = ColumnMode.DOUBLE,
+            shelfLayout = ShelfLayout.COMPACT, fontFamily = ReaderFont.MONO,
+            horizontalMargin = 32f, paragraphSpacing = 18f, letterSpacing = 1.5f,
+            firstLineIndent = false, bold = true, autoHideControls = false, showReadingFooter = false,
+        )
+        val store = ReaderStore(files, this, StandardTestDispatcher(testScheduler))
+        store.updateSettings(settings)
+        advanceUntilIdle()
+        val restored = ReaderStore(files, this, StandardTestDispatcher(testScheduler))
+        assertEquals(settings, restored.state.value.settings)
+    }
+
+    private fun assertProgress(
+        actual: ReadingProgress, item: Int, scroll: Int, chapter: Int, paragraph: Int, character: Int = 0,
+    ) {
+        assertEquals(item, actual.itemIndex, "global item")
+        assertEquals(scroll, actual.scrollOffset, "pixel offset")
+        assertEquals(chapter, actual.chapterIndex, "chapter anchor")
+        assertEquals(paragraph, actual.paragraphIndex, "chapter-local heading/paragraph")
+        assertEquals(character, actual.characterOffset, "UTF-16 text anchor")
+    }
+
     @Test fun settingsAndDocumentLimitsAreEnforced() {
-        assertEquals(36f, ReaderSettings(fontSize = 100f).sanitized().fontSize)
+        assertEquals(40f, ReaderSettings(fontSize = 100f).sanitized().fontSize)
         assertEquals(20f, ReaderSettings(fontSize = Float.NaN).sanitized().fontSize)
         assertFailsWith<IllegalArgumentException> { sample.copy(chapters = emptyList()).validate() }
         assertFailsWith<IllegalArgumentException> { sample.copy(format = "PDF").validate() }
