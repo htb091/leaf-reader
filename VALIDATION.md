@@ -1,6 +1,24 @@
-# v0.2 验证状态
+# v0.3 验证状态
 
 日期：2026-11-25。
+
+## 本轮实际执行（本机，真实运行）
+
+```text
+gradle :shared:desktopTest   → BUILD SUCCESSFUL, 47 tests, 0 failures
+```
+
+环境：Linux aarch64 / OpenJDK 17 / 缓存 Gradle 8.14.3。覆盖 Miuix 0.9.4 + CMP 1.12.0 的全部共享 UI 源码，包括本版新增的 `MiuixAtoms.kt`、`MiuixGlyphs.kt`、`TocSheet.kt` 与重写的书架/阅读/设置页。分页、文字锚点、分章存储的回归测试全部通过。
+
+升级器同样在本机做了端到端演练：对临时模拟仓库执行 `LeafReader-v0.3-upgrade.py --project … --archive …`，31 个源文件写入、`project.yml` 版本改为 0.3.0/3、备份目录与 change-manifest 生成、归档包含 TocSheet/UPGRADE-v0.3/工作流，二次运行全部 unchanged（幂等）。
+
+## 本轮未执行
+
+- macOS 上的 Kotlin/Native iOS framework 编译、Swift 编译、Xcode 链接、IPA 打包。
+- iOS16 真机运行与巨魔安装；手势、动画帧率、刘海/16:9 实际观感。
+- 真实文件提供器导入与后台中断。
+
+## v0.2 及更早记录
 
 ## 本轮实际完成
 

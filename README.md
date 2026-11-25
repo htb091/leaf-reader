@@ -1,6 +1,16 @@
-# 叶读 · Leaf Reader v0.2
+# 叶读 · Leaf Reader v0.3
 
 面向 iOS16+ 的本地小说阅读器，Kotlin Multiplatform / Compose Multiplatform / Miuix 0.9.4。使用 GitHub Actions 构建未签名 ARM64 IPA，交给兼容设备上的 TrollStore 安装。
+
+## v0.3 视觉与动效
+
+- 书架与设置改为 Miuix 悬浮底栏（`Scaffold.floatingToolbar` + `FloatingToolbar`），不再占用布局高度。
+- 顶栏去掉实心条与分割线：渐变遮罩，内容滚动时溶入；上滑时「书架」大标题缩放淡出、紧凑标题淡入。
+- 搜索与导入为两个等大 40dp 圆形按钮（放大镜 / 加号）并排；搜索在下方展开 Miuix 搜索行。
+- 书籍打开/关闭使用 360ms/280ms 弹性缩放淡入淡出；返回按钮为悬浮圆形按钮。
+- 阅读页顶/底栏默认隐藏，点屏幕中央从顶部/底部滑出；底栏右侧为「设置」，中间显示章节进度。
+- 目录改为 Miuix 底部面板：书封+书名+进度、四段 tab、搜索行、当前章高亮、每章字数（来自 manifest）。
+- 控件间距：页面边距 20dp、控件间距 12dp、触控目标 ≥44dp。
 
 ## 与 v0.1 的区别
 
@@ -13,11 +23,11 @@
 - 大书文件流导入、正文按章存储、按章读取。TXT 输入上限512MiB，EPUB输入上限1GiB；这些数值是校验上限，不是真机跑满的承诺。
 - 兼容旧索引/正文的渐进迁移；保留已修好的 POSIX 存储和 lipo -archs 构建链。
 
-详细范围与限制见 [升级说明](<UPGRADE-v0.2.md>)、[验证记录](<VALIDATION.md>)。
+详细范围与限制见 [v0.3 说明](<UPGRADE-v0.3.md>)、[v0.2 说明](<UPGRADE-v0.2.md>)、[验证记录](<VALIDATION.md>)。
 
 ## GitHub Actions
 
-已有工程：把下载的 `LeafReader-v0.2-upgrade.py` 放到仓库根目录，把 `upgrade-v02.yml` 放到 `.github/workflows/`，手动运行 **Build LeafReader v0.2**。升级器明文可审阅、标准库、自包含；备份被覆盖的源码，不读取凭据，不自动提交或推送。
+已有工程：把下载的 `LeafReader-v0.3-upgrade.py` 放到仓库根目录，把 `upgrade-v03.yml` 放到 `.github/workflows/`，手动运行 **Build LeafReader v0.3**。升级器明文可审阅、标准库、自包含；备份被覆盖的源码，不读取凭据，不自动提交或推送。
 
 工作流会应用升级、运行共享测试、构建静态 Shared.framework / iOS App、上传 IPA 和完整升级源码，再跑原生导入测试。升级后的源码 artifact 可作为以后直接维护的仓库内容，不需要永久依赖补丁升级器。
 
@@ -39,7 +49,7 @@ v0.2 进度为章节、局部段落、UTF-16 文字位置，按本地字体尺�
 
 ## 验证状态
 
-本轮执行器启动 bash/ripgrep 失败，因此本地未执行新版本编译、测试、打包或安装。新增测试源码和 CI 门禁已提供。v0.1 的19项通过测试不是 v0.2 的通过证明。首轮 Actions 日志与 iOS16 真机行为才是下一步验收依据。
+v0.3 在本机用 Gradle 8.14.3 + JDK 17 完整编译 `:shared:desktopTest` 并通过（47 项 Kotlin 测试，含分页/锚点/存储回归）。Apple 侧编译、Swift 测试与真机安装仍需 GitHub Actions 与 iOS16 设备验证；本地 JVM 通过不等于 iOS 通过。
 
 ## 许可
 

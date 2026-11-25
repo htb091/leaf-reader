@@ -1,0 +1,92 @@
+name: Build LeafReader v0.3
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leaf-v03-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upgrade-and-build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      PREFERRED_XCODE: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Apply readable source upgrade and archive sources
+        run: |
+          python3 -m py_compile LeafReader-v0.3-upgrade.py
+          python3 LeafReader-v0.3-upgrade.py --project . --archive dist/LeafReader-v0.3-source.zip
+          python3 scripts/check_project.py
+          python3 -m unittest discover -s scripts/tests -v
+          bash -n scripts/build-ios.sh scripts/test-ios.sh
+      - name: Upload complete upgraded source
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeafReader-v0.3-complete-source
+          path: dist/LeafReader-v0.3-source.zip
+          if-no-files-found: error
+      - name: Compile shared UI and run regression tests
+        run: bash ./gradlew :shared:desktopTest -PenableApple=false --stacktrace
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [ -d "$PREFERRED_XCODE" ]; then
+            echo "DEVELOPER_DIR=$PREFERRED_XCODE" >> "$GITHUB_ENV"
+          else
+            python3 - <<'PY'
+          import os, pathlib, re
+          apps = list(pathlib.Path('/Applications').glob('Xcode*.app'))
+          if not apps:
+              raise SystemExit('No Xcode application found')
+          apps.sort(key=lambda p: tuple(int(n) for n in re.findall(r'\d+', p.name)))
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('DEVELOPER_DIR=' + str(apps[-1] / 'Contents/Developer') + '\n')
+          PY
+          fi
+      - name: Inspect Apple tools and install XcodeGen
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen --version
+      - name: Build and package device IPA
+        run: bash scripts/build-ios.sh
+      - name: Upload IPA before optional native test execution
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeafReader-v0.3-iOS16-arm64-unsigned
+          path: |
+            dist/*.ipa
+            dist/*.ipa.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Run native streaming importer tests
+        run: bash scripts/test-ios.sh
+      - name: Upload all test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeafReader-v0.3-test-reports
+          path: |
+            shared/build/reports/tests/
+            build/ParserTests.xcresult
+          if-no-files-found: ignore
+      - name: Summary
+        if: always()
+        run: |
+          echo '### LeafReader v0.3' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Full upgraded source is published separately. IPA is available only if the build step succeeded.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Keep the existing Bundle ID and install over the prior version to retain the local library. Verify migration and pagination on your iOS16 device.' >> "$GITHUB_STEP_SUMMARY"

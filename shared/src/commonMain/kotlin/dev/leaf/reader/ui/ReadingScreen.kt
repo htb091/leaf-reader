@@ -1,7 +1,15 @@
 package dev.leaf.reader.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -10,18 +18,24 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.text
@@ -32,7 +46,9 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -46,7 +62,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import top.yukonga.miuix.kmp.basic.*
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -55,73 +71,115 @@ import kotlin.math.roundToInt
 @Composable
 internal fun ReadingScreen(state: LibraryState, store: ReaderStore) {
     val book = state.currentBook ?: return
+    val scope = rememberCoroutineScope()
     var directory by remember(book.id) { mutableStateOf(false) }
     var settingsOpen by remember(book.id) { mutableStateOf(false) }
     var showHint by remember(book.id) { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
+    var closing by remember(book.id) { mutableStateOf(false) }
+    // One Animatable drives the page entrance: scale 0.94 -> 1 and alpha 0 -> 1.
+    // Closing runs it back to 0 for 280ms before the shelf takes over.
+    val entry = remember(book.id) { Animatable(0f) }
+    LaunchedEffect(book.id) { entry.animateTo(1f, animationSpec = bookOpen()) }
     LaunchedEffect(book.id, state.chapter != null) {
         if (state.chapter != null) {
             delay(4500)
             showHint = false
         }
     }
-    LaunchedEffect(state.chromeVisible, state.settings.autoHideControls, directory, settingsOpen, interaction) {
-        if (state.chromeVisible && state.settings.autoHideControls && !directory && !settingsOpen) {
+    LaunchedEffect(state.chromeVisible, state.settings.autoHideControls, directory, settingsOpen, interaction, closing) {
+        if (state.chromeVisible && state.settings.autoHideControls && !directory && !settingsOpen && !closing) {
             delay(5000)
             store.setChromeVisible(false)
         }
     }
-    Box(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface)) {
-        val chapter = state.chapter
-        if (chapter != null && !state.chapterBusy) {
-            key(book.id, state.chapterIndex, chapter) {
-                ChapterReader(state, chapter, store,
-                    onToggleChrome = { interaction++; store.setChromeVisible(!store.state.value.chromeVisible) },
-                    onInteraction = { interaction++ },
-                    onDirectory = { directory = true },
-                    onSettings = { settingsOpen = true })
+    val leave: () -> Unit = {
+        if (!closing) {
+            closing = true
+            store.setChromeVisible(false)
+            scope.launch {
+                entry.animateTo(0f, animationSpec = bookClose())
+                store.closeBook()
             }
-        } else {
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (state.chapterBusy) {
-                    CircularProgressIndicator(size = 28.dp)
-                    Text("正在装入章节…")
-                } else {
-                    Text("章节尚未载入")
-                    TextButton("重试本章", { store.selectChapter(state.chapterIndex) }, minHeight = 48.dp)
-                    TextButton("选择其他章节", { directory = true }, minHeight = 48.dp)
-                }
-                TextButton("返回书架", store::closeBook, minHeight = 48.dp)
-            }
-        }
-        // Passive hint: no pointer modifier and no place in the measured reading viewport.
-        if (showHint && chapter != null && !state.chapterBusy && !state.chromeVisible) {
-            Text(if (state.settings.readingMode == ReadingMode.SCROLL)
-                "点击中间显示工具栏 · 上下滑动阅读" else "点击中间显示工具栏 · 左右滑动翻页",
-                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp, vertical = 64.dp)
-                    .background(MiuixTheme.colorScheme.surfaceContainer).padding(12.dp),
-                style = MiuixTheme.textStyles.footnote1)
         }
     }
-    OverlayDialog(show = directory, title = "目录", summary = "${book.chapters.size} 章 · 按需载入正文",
-        onDismissRequest = { directory = false }) {
-        val directoryList = rememberLazyListState(state.chapterIndex.coerceIn(0, book.chapters.lastIndex.coerceAtLeast(0)))
-        Column {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp), state = directoryList) {
-                itemsIndexed(book.chapters, key = { number, _ -> number }) { number, chapter ->
-                    TextButton("${number + 1}  ${chapter.title.ifBlank { "正文" }}", {
-                        directory = false
-                        store.selectChapter(number)
-                    }, Modifier.fillMaxWidth(), minHeight = 48.dp, enabled = !state.chapterBusy,
-                        colors = if (number == state.chapterIndex) ButtonDefaults.textButtonColorsPrimary()
-                            else ButtonDefaults.textButtonColors())
+    BoxWithConstraints(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface)) {
+        // Sheets never exceed a share of the real window height, so 16:9 phones keep the list scrollable.
+        val tocMaxHeight = maxHeight * 0.72f
+        val settingsMaxHeight = maxHeight * 0.82f
+        Box(
+            Modifier.fillMaxSize().graphicsLayer {
+                val progress = entry.value
+                val scale = 0.94f + 0.06f * progress
+                scaleX = scale
+                scaleY = scale
+                alpha = progress
+            },
+        ) {
+            val chapter = state.chapter
+            if (chapter != null && !state.chapterBusy) {
+                key(book.id, state.chapterIndex, chapter) {
+                    ChapterReader(state, chapter, store, closing,
+                        onToggleChrome = { interaction++; store.setChromeVisible(!store.state.value.chromeVisible) },
+                        onInteraction = { interaction++ },
+                        onDirectory = { directory = true },
+                        onSettings = { settingsOpen = true },
+                        onClose = leave)
+                }
+            } else {
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    if (state.chapterBusy) {
+                        CircularProgressIndicator(size = 28.dp)
+                        Text("正在装入章节…")
+                    } else {
+                        Text("章节尚未载入")
+                        TextButton("重试本章", { store.selectChapter(state.chapterIndex) }, minHeight = 48.dp)
+                        TextButton("选择其他章节", { directory = true }, minHeight = 48.dp)
+                    }
+                    TextButton("返回书架", leave, minHeight = 48.dp)
                 }
             }
-            TextButton("关闭目录", { directory = false }, Modifier.fillMaxWidth(), minHeight = 48.dp)
+            // Passive hint: no pointer modifier and no place in the measured reading viewport.
+            if (showHint && chapter != null && !state.chapterBusy && !state.chromeVisible) {
+                Text(if (state.settings.readingMode == ReadingMode.SCROLL)
+                    "点击中间显示工具栏 · 上下滑动阅读" else "点击中间显示工具栏 · 左右滑动翻页",
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp, vertical = 64.dp)
+                        .background(MiuixTheme.colorScheme.surfaceContainer).padding(12.dp),
+                    style = MiuixTheme.textStyles.footnote1)
+            }
         }
+        // While the page animates out, swallow pointer input so no chrome action can fire twice.
+        if (closing) {
+            Box(Modifier.fillMaxSize().pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) awaitPointerEvent().changes.forEach { it.consume() }
+                }
+            })
+        }
+        OverlayBottomSheet(
+            show = directory,
+            title = null,
+            onDismissRequest = { directory = false },
+            cornerRadius = 28.dp,
+        ) {
+            TocSheet(
+                book = book,
+                manifest = state.manifest,
+                currentChapter = state.chapterIndex,
+                progressText = "${(state.chapterIndex + 1).coerceAtLeast(1)} / " +
+                    "${(state.manifest?.chapters?.size ?: book.chapters.size).coerceAtLeast(1)}",
+                maxHeight = tocMaxHeight,
+                onSelectChapter = {
+                    if (it != state.chapterIndex) store.selectChapter(it)
+                    directory = false
+                },
+                onDismiss = { directory = false },
+            )
+        }
+        ReadingSettings(settingsOpen, state.settings, store::updateSettings, { settingsOpen = false },
+            maxHeight = settingsMaxHeight)
     }
-    ReadingSettings(settingsOpen, state.settings, store::updateSettings, { settingsOpen = false })
 }
 
 private data class ChapterLayout(val pages: List<MeasuredPage>, val paragraphs: List<TextLayoutResult>)
@@ -135,10 +193,12 @@ private fun ChapterReader(
     state: LibraryState,
     chapter: BookChapter,
     store: ReaderStore,
+    closing: Boolean,
     onToggleChrome: () -> Unit,
     onInteraction: () -> Unit,
     onDirectory: () -> Unit,
     onSettings: () -> Unit,
+    onClose: () -> Unit,
 ) {
     val book = state.currentBook ?: return
     val settings = state.settings
@@ -345,41 +405,90 @@ private fun ChapterReader(
                 }
             }
         }
-        if (settings.showReadingFooter) {
+        // The floating dock replaces the footer line while the chrome is up, so they never overlap.
+        if (settings.showReadingFooter && !state.chromeVisible) {
             Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = margin, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MutedText(chapter.title.ifBlank { "正文" }, Modifier.weight(1f), maxLines = 1)
                 MutedText("${visiblePage + 1} / ${currentLayout?.pages?.size ?: "…"} · ${state.chapterIndex + 1}/${book.chapters.size}")
             }
         }
-        if (state.chromeVisible) {
-            SmallTopAppBar(title = book.title, modifier = Modifier.align(Alignment.TopCenter),
-                defaultWindowInsetsPadding = false,
-                navigationIcon = { TextButton("书架", store::closeBook, minHeight = 48.dp) },
-                actions = {
-                    TextButton("目录", onDirectory, minHeight = 48.dp)
-                    TextButton("排版", onSettings, minHeight = 48.dp)
-                })
-            Card(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
-                insideMargin = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val chapterFraction = ((visiblePage + 1).toFloat() / (currentLayout?.pages?.size ?: 1))
-                    ProgressTrack((state.chapterIndex + chapterFraction) / book.chapters.size.coerceAtLeast(1), Modifier.fillMaxWidth())
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton("上一页", { move(-1) }, modifier = Modifier.weight(1f),
-                            enabled = ready && (visiblePage > 0 || previousChapter), minHeight = 48.dp)
-                        TextButton("下一页", { move(1) }, modifier = Modifier.weight(1f),
-                            enabled = ready && (visiblePage < (currentLayout?.pages?.lastIndex ?: 0) || nextChapter), minHeight = 48.dp)
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton("上一章", { store.selectChapter(state.chapterIndex - 1, atEnd = true) },
-                            modifier = Modifier.weight(1f), enabled = ready && previousChapter, minHeight = 48.dp)
-                        TextButton("下一章", { store.selectChapter(state.chapterIndex + 1) },
-                            modifier = Modifier.weight(1f), enabled = ready && nextChapter, minHeight = 48.dp)
-                    }
+        val totalChapters = (state.manifest?.chapters?.size ?: book.chapters.size).coerceAtLeast(1)
+        val pageCount = (currentLayout?.pages?.size ?: 1).coerceAtLeast(1)
+        val chapterFraction = ((visiblePage + 1).toFloat() / pageCount).coerceIn(0f, 1f)
+        val percent = (((state.chapterIndex + chapterFraction) / totalChapters) * 100f).roundToInt().coerceIn(1, 100)
+        val progressText = "${(state.chapterIndex + 1).coerceAtMost(totalChapters)} / $totalChapters · $percent%"
+        // Immersive chrome: a gradient-scrimmed floating header, never a solid bar or divider.
+        AnimatedVisibility(
+            visible = state.chromeVisible && !closing,
+            enter = slideInVertically(animationSpec = tween(ChromeInMillis, easing = MiuixEaseOut)) { -it } +
+                fadeIn(animationSpec = tween(ChromeInMillis)),
+            exit = slideOutVertically(animationSpec = tween(ChromeOutMillis, easing = MiuixEaseIn)) { -it } +
+                fadeOut(animationSpec = tween(ChromeOutMillis)),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            GradientHeaderScrim {
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    MiuixCircleButton(Glyph.BACK, "返回书架", onClose, size = TouchTarget)
+                    Text(chapter.title.ifBlank { "正文" }, Modifier.weight(1f), fontSize = 15.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    MiuixCircleButton(Glyph.TOC, "打开目录", onDirectory, size = TouchTarget)
                 }
             }
         }
+        AnimatedVisibility(
+            visible = state.chromeVisible && !closing,
+            enter = slideInVertically(animationSpec = tween(ChromeInMillis, easing = MiuixEaseOut)) { it } +
+                fadeIn(animationSpec = tween(ChromeInMillis)),
+            exit = slideOutVertically(animationSpec = tween(ChromeOutMillis, easing = MiuixEaseIn)) { it } +
+                fadeOut(animationSpec = tween(ChromeOutMillis)),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Box(
+                Modifier.fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                MiuixDockPill(Modifier.fillMaxWidth()) {
+                    DockAction(Glyph.BOOK, "目录", onDirectory)
+                    Text(progressText, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+                        fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    DockAction(Glyph.TUNE, "设置", onSettings)
+                }
+            }
+        }
+    }
+}
+
+/** 44dp minimum touch target; the visible glyph stays small inside it. */
+private val TouchTarget = 44.dp
+private const val ChromeInMillis = 240
+private const val ChromeOutMillis = 200
+
+/** Glyph + label action inside the floating reading dock. */
+@Composable
+private fun DockAction(glyph: Glyph, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = TouchTarget)
+            .padding(horizontal = 8.dp)
+            .semantics { contentDescription = label },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        MiuixGlyph(glyph, MiuixTheme.colorScheme.onSurface, 20.dp)
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }
 
