@@ -1068,7 +1068,7 @@ internal fun MiuixGlyph(glyph: Glyph, tint: Color, size: Dp = 22.dp) {
             Glyph.GEAR -> {
                 drawCircle(tint, 3.2f * unit, at(12f, 12f), style = Stroke(stroke))
                 for (index in 0 until 8) {
-                    val angle = index * (Math.PI / 4).toFloat()
+                    val angle = index * (kotlin.math.PI / 4).toFloat()
                     val inner = 6.2f
                     val outer = 9.2f
                     line(
