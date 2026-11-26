@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Generate the single-file LeafReader upgrade installer from the current sources.
+"""Pack current LeafReader sources into one offline, inspectable Python installer.
 
-The runtime half of the installer lives in tools/upgrade_runner.py. This packer
-only verifies that every embedded file round-trips byte-for-byte and that the
-chosen raw-string delimiter does not collide with the content.
+Run only after the release freeze:
+  python3 tools/make_upgrade.py 0.4 OUTPUT.py
+
+Every payload is UTF-8 round-tripped exactly, including its final-newline state.
+All v0.3 payloads remain required. New UI/tests are discovered AND checked against
+explicit requirements; missing files abort rather than producing a partial pack.
+This program only creates the requested installer, never applies it or builds.
 """
+import argparse
+import ast
 import hashlib
-import sys
+import json
+import os
 from pathlib import Path
+import re
+import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / 'tools' / 'upgrade_runner.py'
 
+# Historical v0.3 payloads: intentionally retained for v0.1/v0.2/v0.3 upgrades.
 FILES = [
     'shared/src/commonMain/kotlin/dev/leaf/reader/Models.kt',
     'shared/src/commonMain/kotlin/dev/leaf/reader/ReaderStore.kt',
@@ -46,83 +57,182 @@ FILES = [
     '.github/workflows/upgrade-v02.yml',
     '.github/workflows/upgrade-v03.yml',
 ]
+REQUIRED_V04_FILES = [
+    'shared/src/commonMain/kotlin/dev/leaf/reader/ui/ReaderChrome.kt',
+    'shared/src/commonMain/kotlin/dev/leaf/reader/ui/ContentsScreen.kt',
+    'UPGRADE-v0.4.md',
+    '.github/workflows/upgrade-v04.yml',
+    'scripts/tests/test_upgrade_v04.py',
+    'tools/make_upgrade.py',
+    'tools/upgrade_runner.py',
+]
+# Lead confirms the exact new directory test name before release packing.
+# Until then discover_source_files also requires a matching directory-test file.
+REQUIRED_DIRECTORY_TESTS = [
+    'shared/src/commonTest/kotlin/dev/leaf/reader/ui/ContentsNavigationTest.kt',
+    'shared/src/commonTest/kotlin/dev/leaf/reader/ui/ReaderChromeTest.kt',
+]
+DISCOVER_TREES = (
+    'shared/src/commonMain/kotlin/dev/leaf/reader/ui',
+    'shared/src/commonTest/kotlin/dev/leaf/reader',
+)
+PATCH_ONLY = {'shared/build.gradle.kts', 'iosApp/project.yml'}
 
 
 def literal(text):
+    """Prefer readable raw triple strings; validate the syntax, not just collision.
+
+    repr is a plain Python string fallback when both delimiters collide or a
+    terminal quote/backslash would make a raw literal ambiguous. No encoding or
+    compression payload hides source text.
+    """
     for quote in ("'''", '"""'):
-        if quote not in text and not text.endswith('\\'):
-            return 'r%s%s%s' % (quote, text, quote)
-    raise SystemExit('No safe raw-string delimiter for content; refusing to emit lossy literal')
+        if quote in text:
+            continue
+        candidate = 'r%s%s%s' % (quote, text, quote)
+        try:
+            if ast.literal_eval(candidate) == text:
+                return candidate
+        except (SyntaxError, ValueError):
+            pass
+    candidate = repr(text)
+    if ast.literal_eval(candidate) != text:
+        raise ValueError('Python source literal failed round-trip')
+    return candidate
 
 
-def main(argv):
-    version = argv[1] if len(argv) > 1 else '0.3'
-    marketing = version if version.count('.') >= 2 else version + '.0'
-    output = Path(argv[2]) if len(argv) > 2 else Path('/sdcard/Download/DSH-Go/LeafReader-v%s-upgrade.py' % version)
-    runner = RUNNER.read_text()
-    marketing = version if version.count(".") >= 2 else version + ".0"
-    runner = runner.replace("'MARKETING_VERSION': '0.2.0'", "'MARKETING_VERSION': '%s'" % marketing)
-    runner = runner.replace("'CURRENT_PROJECT_VERSION': '2'", "'CURRENT_PROJECT_VERSION': '3'")
-
-    missing = [name for name in FILES if not (ROOT / name).is_file()]
+def discover_source_files(root):
+    names = set(FILES + REQUIRED_V04_FILES + REQUIRED_DIRECTORY_TESTS)
+    for tree in DISCOVER_TREES:
+        directory = root / tree
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError('Missing/linked source tree: %s' % tree)
+        for current, directories, files in os.walk(str(directory), followlinks=False):
+            current = Path(current)
+            for name in directories:
+                if (current / name).is_symlink():
+                    raise ValueError('Linked source directory: %s' % (current / name))
+            directories.sort()
+            for name in sorted(files):
+                if name.endswith('.kt'):
+                    path = current / name
+                    if path.is_symlink():
+                        raise ValueError('Linked source file: %s' % path)
+                    names.add(path.relative_to(root).as_posix())
+    missing = [name for name in sorted(names) if not (root / name).is_file()]
     if missing:
-        raise SystemExit('Missing sources: %s' % ', '.join(missing))
+        raise ValueError('Missing required sources (no partial installer emitted): %s' % ', '.join(missing))
+    directory_tests = [name for name in names if '/commonTest/' in name and
+                       re.search(r'(Contents|Toc|Directory).*Test\.kt$', Path(name).name, re.IGNORECASE)]
+    if not directory_tests:
+        raise ValueError('Missing v0.4 contents/directory regression test; confirm its exact filename before packing')
+    if names & PATCH_ONLY:
+        raise ValueError('Build configuration must be patched, not embedded whole')
+    for name in names:
+        path = root / name
+        for ancestor in (path, *path.parents):
+            if ancestor.is_symlink():
+                raise ValueError('Linked payload path: %s' % name)
+            if ancestor == root:
+                break
+    return sorted(names)
 
+
+def assemble_installer(root, version='0.4', build_number=None):
+    if not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', version):
+        raise ValueError('Use a numeric version, for example 0.4 or 0.4.0')
+    marketing = version if version.count('.') == 2 else version + '.0'
+    build_number = str(build_number) if build_number is not None else str(int(version.split('.')[1]))
+    if not re.fullmatch(r'[1-9][0-9]*', build_number):
+        raise ValueError('Build number must be a positive integer')
+    names = discover_source_files(root)
+    runner_path = root / 'tools' / 'upgrade_runner.py'
+    runner = runner_path.read_bytes().decode('utf-8')
+    ast.parse(runner, filename=str(runner_path))
+    payloads = {}
+    hashes = {}
     parts = []
-    digest = {}
-    for name in FILES:
-        raw = (ROOT / name).read_bytes()
+    for name in names:
+        raw = (root / name).read_bytes()
         text = raw.decode('utf-8')
-        if not text.endswith('\n'):
-            text += '\n'
-            print('note: %s lacked a trailing newline; embedded with one' % name)
-        digest[name] = hashlib.sha256(text.encode('utf-8')).hexdigest()
-        parts.append("    '%s': %s,\n" % (name, literal(text)))
-
+        if text.encode('utf-8') != raw:
+            raise ValueError('UTF-8 round-trip failure: %s' % name)
+        payloads[name] = raw
+        hashes[name] = hashlib.sha256(raw).hexdigest()
+        parts.append('    %r: %s,\n' % (name, literal(text)))
     header = '''#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """LeafReader v%s offline source upgrade (Python 3.8+, standard library only).
 
 Usage: python3 LeafReader-v%s-upgrade.py --project PATH [--archive PATH]
-Review FILES below before use. No network, package installation, subprocess,
-credential discovery, Git operation or downloaded-code execution is performed.
-It writes the %d frozen source files plus two version scalars in iosApp/project.yml.
-Overwritten files are copied to .leaf-upgrade-backup/<UTC>/ with a change manifest.
-Atomicity is per file (same-directory tempfile + os.replace).
-Kotlin/Swift compilation and regression tests belong to CI, not this tool.
+Plain FILES payloads are reviewable. No network, installs, subprocess or Git.
+Embeds %d complete source files; preserves the user's Gradle configuration and
+Bundle ID by patching only pinned miuix-blur and two Xcode version scalars.
+All target, Python AST, plist, anchor and payload checks precede source writes.
+Backups, change manifest and payload SHA map live in .leaf-upgrade-backup/.
+Kotlin/Swift compilation and tests remain CI/device verification tasks.
 """
-
-import argparse
-import ast
-import datetime
-import hashlib
-import json
-import os
-from pathlib import Path, PurePosixPath
-import plistlib
-import re
-import tempfile
-import zipfile
-
+INSTALLER_VERSION = %r
+VERSION_PATCHES = %r
 FILES = {
-''' % (version, version, len(FILES))
+''' % (version, version, len(names), version, {
+        'MARKETING_VERSION': marketing, 'CURRENT_PROJECT_VERSION': build_number,
+    })
+    source = header + ''.join(parts) + '}\nEXPECTED_PAYLOAD_SHA256 = ' + json.dumps(hashes, indent=4, sort_keys=True) + '\n\n' + runner
+    tree = ast.parse(source, filename='LeafReader-upgrade.py')
+    assignments = [node for node in tree.body if isinstance(node, ast.Assign) and
+                   any(isinstance(target, ast.Name) and target.id == 'FILES' for target in node.targets) and
+                   isinstance(node.value, ast.Dict)]
+    if len(assignments) != 1:
+        raise ValueError('Expected exactly one literal FILES dictionary')
+    recovered = ast.literal_eval(assignments[0].value)
+    if set(recovered) != set(payloads):
+        raise ValueError('Payload filename round-trip failure')
+    for name in names:
+        if recovered[name].encode('utf-8') != payloads[name]:
+            raise ValueError('Payload byte round-trip failure: %s' % name)
+    return source, hashes
 
-    output.write_text(header + ''.join(parts) + runner)
-    generated = output.read_bytes()
-    check = compile(output.read_text(), str(output), 'exec')
-    del check
 
-    # Verify every payload appears verbatim in the generated file.
-    for name in FILES:
-        text = (ROOT / name).read_text()
-        if text not in generated.decode('utf-8'):
-            raise SystemExit('Payload verification failed for %s' % name)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('version', nargs='?', default='0.4')
+    parser.add_argument('output', nargs='?')
+    parser.add_argument('--build-number', type=int)
+    args = parser.parse_args(argv)
+    output = Path(args.output) if args.output else Path('/sdcard/Download/DSH-Go/LeafReader-v%s-upgrade.py' % args.version)
+    source, hashes = assemble_installer(ROOT, args.version, args.build_number)
+    output = output.expanduser().absolute()
+    for path in (output, *output.parents):
+        if path.is_symlink():
+            raise ValueError('Linked output path: %s' % path)
+    try:
+        output.relative_to(ROOT)
+    except ValueError:
+        pass
+    else:
+        if output.relative_to(ROOT).as_posix() in set(hashes) | PATCH_ONLY:
+            raise ValueError('Installer output collides with a source file')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=str(output.parent), prefix='.leaf-pack-', suffix='.tmp')
+    try:
+        with os.fdopen(handle, 'wb') as stream:
+            stream.write(source.encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, output)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     print('Wrote %s (%d files, %d bytes, sha256=%s)' % (
-        output, len(FILES), len(generated), hashlib.sha256(generated).hexdigest()))
-    print('Payload sha256:')
-    for name in FILES:
-        print('  %s  %s' % (digest[name], name))
+        output, len(hashes), output.stat().st_size,
+        hashlib.sha256(output.read_bytes()).hexdigest()))
+    print('Payload SHA256: ' + json.dumps(hashes, sort_keys=True))
+    return 0
 
 
 if __name__ == '__main__':
-    main(sys.argv)
+    try:
+        main()
+    except (OSError, ValueError, SyntaxError) as error:
+        raise SystemExit('Packing stopped: %s' % error)

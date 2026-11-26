@@ -4,9 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -23,6 +28,18 @@ import dev.leaf.reader.ShelfBook
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
+
+// Keep coordinates rather than a cached offset: scrolling can move a card between frames.
+private class BookOrigin {
+    var coordinates: LayoutCoordinates? = null
+
+    fun center(): Offset? {
+        val current = coordinates ?: return null
+        if (!current.isAttached) return null
+        val bounds = current.boundsInRoot()
+        return if (bounds.isEmpty) null else bounds.center
+    }
+}
 
 /** Uses the store's compatible global anchor, never a chapter-relative index as book progress. */
 private fun shelfPercent(book: ShelfBook): Int {
@@ -54,7 +71,8 @@ private fun progressBadge(book: ShelfBook): String = when {
  * progress track. The whole card is one reading target; removal is never offered here.
  */
 @Composable
-internal fun ContinueReadingHero(book: ShelfBook, enabled: Boolean, onOpen: () -> Unit) {
+internal fun ContinueReadingHero(book: ShelfBook, enabled: Boolean, onOpen: (Offset?) -> Unit) {
+    val origin = remember(book.id) { BookOrigin() }
     val primary = MiuixTheme.colorScheme.primary
     Card(
         modifier = Modifier.fillMaxWidth().semantics {
@@ -66,13 +84,13 @@ internal fun ContinueReadingHero(book: ShelfBook, enabled: Boolean, onOpen: () -
         ),
         insideMargin = PaddingValues(0.dp),
         pressFeedbackType = PressFeedbackType.Sink,
-        onClick = if (enabled) onOpen else null,
+        onClick = if (enabled) ({ onOpen(origin.center()) }) else null,
     ) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            BookCover(book, Modifier.width(64.dp).aspectRatio(0.75f), small = true)
+            BookCover(book, Modifier.width(64.dp).aspectRatio(0.75f).onGloballyPositioned { origin.coordinates = it }, small = true)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     CountPill("继续阅读", container = primary.copy(alpha = 0.14f), content = primary)
@@ -110,7 +128,8 @@ internal fun ContinueReadingHero(book: ShelfBook, enabled: Boolean, onOpen: () -
  * title/author. Long press is the removal affordance so the title keeps its full width.
  */
 @Composable
-internal fun ShelfCoverTile(book: ShelfBook, enabled: Boolean, onOpen: () -> Unit, onDelete: () -> Unit) {
+internal fun ShelfCoverTile(book: ShelfBook, enabled: Boolean, onOpen: (Offset?) -> Unit, onDelete: () -> Unit) {
+    val origin = remember(book.id) { BookOrigin() }
     Card(
         modifier = Modifier.fillMaxWidth().semantics {
             contentDescription = "《${book.title}》，${book.author.ifBlank { "佚名" }}，${progressBadge(book)}；长按可移除"
@@ -121,11 +140,11 @@ internal fun ShelfCoverTile(book: ShelfBook, enabled: Boolean, onOpen: () -> Uni
         ),
         insideMargin = PaddingValues(0.dp),
         pressFeedbackType = PressFeedbackType.Sink,
-        onClick = if (enabled) onOpen else null,
+        onClick = if (enabled) ({ onOpen(origin.center()) }) else null,
         onLongPress = if (enabled) onDelete else null,
     ) {
         Column(Modifier.fillMaxWidth()) {
-            Box(Modifier.fillMaxWidth().aspectRatio(0.75f)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).onGloballyPositioned { origin.coordinates = it }) {
                 BookCover(book, Modifier.fillMaxSize())
                 CountPill(
                     progressBadge(book),
@@ -159,11 +178,13 @@ internal fun ShelfCoverTile(book: ShelfBook, enabled: Boolean, onOpen: () -> Uni
 /** One-column list / compact row. Removal sits at the trailing edge, never next to the title. */
 @Composable
 internal fun ShelfListRow(
-    book: ShelfBook, enabled: Boolean, compact: Boolean, onOpen: () -> Unit, onDelete: () -> Unit,
+    book: ShelfBook, enabled: Boolean, compact: Boolean, onOpen: (Offset?) -> Unit, onDelete: () -> Unit,
 ) {
+    val origin = remember(book.id) { BookOrigin() }
+    val coverOrigin = remember(book.id) { BookOrigin() }
     val primary = MiuixTheme.colorScheme.primary
     Card(
-        modifier = Modifier.fillMaxWidth().semantics {
+        modifier = Modifier.fillMaxWidth().onGloballyPositioned { origin.coordinates = it }.semantics {
             contentDescription = "《${book.title}》，${book.author.ifBlank { "佚名" }}，${readingLabel(book)}"
         },
         colors = CardDefaults.defaultColors(
@@ -172,7 +193,7 @@ internal fun ShelfListRow(
         ),
         insideMargin = PaddingValues(0.dp),
         pressFeedbackType = PressFeedbackType.Sink,
-        onClick = if (enabled) onOpen else null,
+        onClick = if (enabled) ({ onOpen(if (compact) origin.center() else coverOrigin.center() ?: origin.center()) }) else null,
         onLongPress = if (enabled) onDelete else null,
     ) {
         Row(
@@ -186,7 +207,7 @@ internal fun ShelfListRow(
                         .background(primary.copy(alpha = 0.55f), RoundedCornerShape(2.dp)),
                 )
             } else {
-                BookCover(book, Modifier.width(54.dp).aspectRatio(0.75f), small = true)
+                BookCover(book, Modifier.width(54.dp).aspectRatio(0.75f).onGloballyPositioned { coverOrigin.coordinates = it }, small = true)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
@@ -281,7 +302,7 @@ internal fun ShelfEmptyCard(
             fontWeight = FontWeight.SemiBold,
         )
         MutedLabel(
-            if (querying) "换一个书名或作者试试。" else "导入本地 TXT 或 EPUB，下次从上次的位置接着读。",
+            if (querying) "换一个书名、作者或格式试试。" else "导入本地 TXT 或 EPUB，下次从上次的位置接着读。",
             modifier = Modifier.padding(top = 8.dp),
         )
         TextButton(

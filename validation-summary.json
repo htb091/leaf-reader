@@ -1,14 +1,11 @@
 {
-  "version": "0.2.0",
-  "date": "2026-11-25",
-  "local_execution": "unavailable: spawn bash ENOENT; read/edit/write work",
-  "shared_ui_compilation": "not executed for v0.2",
-  "kotlin_test_cases_in_source": 47,
-  "kotlin_test_results": null,
-  "swift_streaming_cases_added": 13,
-  "swift_previous_cases_retained": 15,
-  "swift_test_results": null,
-  "ipa_build": "not executed for v0.2; use upgrade-v02 workflow",
+  "version": "0.4.0",
+  "date": "2026-11-26",
+  "shared_desktop_compilation": "passed: Gradle :shared:desktopTest on Linux/JDK 17",
+  "kotlin_test_results": {"tests": 58, "failures": 0, "errors": 0, "skipped": 0},
+  "apple_framework_and_swift": "not run; requires macOS/Xcode",
+  "ipa_build": "not run for v0.4",
+  "device_rendering_and_performance": "not tested; includes 16:9, blur, transition and safe areas",
   "github_workflow_dispatch": "not performed",
   "known_build_fixes_preserved": ["POSIX storage", "lipo -archs", "Xcode selection", "IPA upload before native tests"]
 }

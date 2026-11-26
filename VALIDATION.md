@@ -1,4 +1,13 @@
-# v0.3 验证状态
+# 验证状态
+
+## v0.4（2026-11-26）
+
+- 本机执行 `bash ./gradlew :shared:desktopTest -PenableApple=false --stacktrace`，构建成功；测试结果 XML 统计 **58 项、0 失败、0 错误、0 跳过**，包含新增目录和阅读控制逻辑测试。
+- `python3 scripts/check_project.py` 通过；23 项 Python 脚本测试通过（其中升级器 18 项、原 IPA 打包器 5 项）。
+- 用原始 v0.1 源码 ZIP 在临时目录执行 v0.4 升级两次，并检查 Bundle ID、blur 依赖和源码归档；在另一份升级后的 v0.1 临时工程上重新运行 `:shared:desktopTest`，构建及测试通过。
+- 这些是 Linux/JVM 检验，不是渲染截图或设备性能测试。iOS Kotlin/Native、Swift、IPA、实际 16:9 布局和渐进模糊均待 GitHub macOS 构建与真机验证。
+
+## v0.3 验证状态
 
 日期：2026-11-25。
 

@@ -25,6 +25,7 @@ kotlin {
             implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
             implementation("org.jetbrains.compose.ui:ui:1.12.0")
             implementation("top.yukonga.miuix.kmp:miuix-ui:0.9.4")
+            implementation("top.yukonga.miuix.kmp:miuix-blur:0.9.4")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
         }

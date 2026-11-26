@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -26,8 +28,8 @@ import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * Typography sheet. Same bottom-sheet surface as the table of contents so both entry points
- * behave alike; every row keeps a 48dp minimum height and 16dp inside spacing.
+ * Scrollable typography sheet with a pinned close action, including on short landscape windows.
+ * Every interactive row keeps at least a 48dp target and clearly separated groups.
  */
 @Composable
 internal fun ReadingSettings(
@@ -39,18 +41,23 @@ internal fun ReadingSettings(
 ) {
     OverlayBottomSheet(
         show = show,
-        title = "排版设置",
+        title = null,
         onDismissRequest = onDismiss,
         cornerRadius = 28.dp,
     ) {
-        Column(
-            Modifier.fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-                .heightIn(max = maxHeight)
+        Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("排版设置", Modifier.weight(1f).semantics { heading() },
+                    fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                ReaderIconButton(Glyph.CLOSE, "关闭排版设置", onDismiss)
+            }
+            Column(Modifier.fillMaxWidth().weight(1f, fill = false)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
-        ) {
+                verticalArrangement = Arrangement.spacedBy(22.dp)) {
             SettingsSection("翻页与分栏") {
                 Choice("阅读方式", listOf("滑动", "无动画", "滚动"),
                     listOf(ReadingMode.SLIDE, ReadingMode.INSTANT, ReadingMode.SCROLL).indexOf(settings.readingMode)) {
@@ -87,6 +94,7 @@ internal fun ReadingSettings(
                 SettingsNote("轻点中央显示 / 隐藏控制栏；分页时轻点两侧翻页。字号、分栏或旋转后按文字位置恢复，不存储页码。")
             }
             PrimaryAction("完成", onDismiss, Modifier.fillMaxWidth())
+            }
         }
     }
 }
@@ -108,7 +116,7 @@ private fun Choice(label: String, labels: List<String>, selected: Int, onSelect:
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, style = MiuixTheme.textStyles.body2)
         TabRowWithContour(tabs = labels, selectedTabIndex = selected.coerceAtLeast(0),
-            onTabSelected = onSelect, modifier = Modifier.fillMaxWidth(), minWidth = 52.dp)
+            onTabSelected = onSelect, modifier = Modifier.fillMaxWidth(), minWidth = 52.dp, height = 48.dp)
     }
 }
 
@@ -130,7 +138,7 @@ private fun StepSetting(label: String, value: Float, minimum: Float, maximum: Fl
     }
 }
 
-/** 44dp square stepper button; the symbol is text, not an icon dependency. */
+/** 48dp square stepper button; the symbol is text, not an icon dependency. */
 @Composable
 private fun StepButton(symbol: String, description: String, enabled: Boolean, onClick: () -> Unit) {
     val container = MiuixTheme.colorScheme.surfaceContainerHigh
@@ -153,10 +161,12 @@ private fun StepButton(symbol: String, description: String, enabled: Boolean, on
 
 @Composable
 private fun ToggleSetting(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
+        .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+        .semantics { contentDescription = label }, verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 15.sp, maxLines = 1)
-        Switch(checked = checked, onCheckedChange = onChange,
-            modifier = Modifier.semantics { contentDescription = label })
+        Switch(checked = checked, onCheckedChange = null,
+            modifier = Modifier.clearAndSetSemantics { })
     }
 }
 
@@ -166,7 +176,7 @@ private fun SettingsNote(text: String) {
         color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.62f))
 }
 
-private val SettingsTouchTarget = 44.dp
+private val SettingsTouchTarget = 48.dp
 
 @Composable
 internal fun PrimaryAction(label: String, action: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) =

@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -21,12 +22,18 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +43,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.leaf.reader.*
 import top.yukonga.miuix.kmp.basic.*
+import top.yukonga.miuix.kmp.blur.Backdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -44,13 +54,18 @@ private enum class ShelfOrder(val label: String) {
 }
 
 /** Keeps the floating dock from covering the last row; >= 96dp by contract. */
-private val ShelfDockClearance = 104.dp
+private val ShelfDockClearance = 128.dp
 
 /** Scroll distance over which the large title folds into the compact top bar. */
 private val ShelfCollapseDistance = 72.dp
 
 @Composable
-internal fun ShelfScreen(state: LibraryState, store: ReaderStore, onImportRequested: () -> Unit) {
+internal fun ShelfScreen(
+    state: LibraryState,
+    store: ReaderStore,
+    onImportRequested: () -> Unit,
+    onOpenBook: (String, Offset?) -> Unit = { id, _ -> store.openBook(id) },
+) {
     var panel by rememberSaveable { mutableIntStateOf(0) }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
@@ -59,6 +74,7 @@ internal fun ShelfScreen(state: LibraryState, store: ReaderStore, onImportReques
     var headerHeightPx by remember { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState()
     val settingsState = rememberLazyListState()
+    val backdrop = rememberLayerBackdrop()
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
     val enabled = !state.busy
@@ -69,7 +85,8 @@ internal fun ShelfScreen(state: LibraryState, store: ReaderStore, onImportReques
         val filtered = state.books.filter {
             keyword.isEmpty() ||
                 it.title.contains(keyword, ignoreCase = true) ||
-                it.author.contains(keyword, ignoreCase = true)
+                it.author.contains(keyword, ignoreCase = true) ||
+                it.format.contains(keyword, ignoreCase = true)
         }
         when (order) {
             ShelfOrder.RECENT -> filtered.sortedWith(
@@ -122,39 +139,47 @@ internal fun ShelfScreen(state: LibraryState, store: ReaderStore, onImportReques
             ShelfDock(panel) { next ->
                 panel = next
                 searching = false
+                query = ""
                 focusManager.clearFocus()
             }
         },
     ) { insets ->
         Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
-            if (shelfMode) {
-                ShelfGridPane(
-                    books = books,
-                    continuing = continuing,
-                    layout = layout,
-                    order = order,
-                    query = query,
-                    enabled = enabled,
-                    topPadding = contentTopPadding,
-                    state = gridState,
-                    onOpen = { store.openBook(it.id) },
-                    onDelete = { deleting = it },
-                    onImport = onImportRequested,
-                    onClearSearch = { query = ""; focusManager.clearFocus() },
-                )
-            } else {
-                ShelfSettingsPane(
-                    state = state,
-                    store = store,
-                    onImportRequested = onImportRequested,
-                    orderIndex = orderIndex,
-                    onOrderChange = { orderIndex = it },
-                    listState = settingsState,
-                    topPadding = contentTopPadding,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            // Capture only the pane, as a sibling of the header, to avoid recursive blur.
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                if (shelfMode) {
+                    ShelfGridPane(
+                        books = books,
+                        continuing = continuing,
+                        layout = layout,
+                        order = order,
+                        query = query,
+                        enabled = enabled,
+                        topPadding = contentTopPadding,
+                        state = gridState,
+                        onOpen = { book, origin ->
+                            focusManager.clearFocus()
+                            onOpenBook(book.id, origin)
+                        },
+                        onDelete = { deleting = it },
+                        onImport = onImportRequested,
+                        onClearSearch = { query = ""; focusManager.clearFocus() },
+                    )
+                } else {
+                    ShelfSettingsPane(
+                        state = state,
+                        store = store,
+                        onImportRequested = onImportRequested,
+                        orderIndex = orderIndex,
+                        onOrderChange = { orderIndex = it },
+                        listState = settingsState,
+                        topPadding = contentTopPadding,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
             ShelfHeader(
+                backdrop = backdrop,
                 compactTitle = if (shelfMode) "书架" else "设置",
                 largeTitle = if (shelfMode) "书架" else "设置",
                 detail = if (shelfMode) "共 ${state.books.size} 本本地书籍" else "你的书架，你的阅读习惯",
@@ -212,9 +237,15 @@ private fun ShelfDock(panel: Int, onSelect: (Int) -> Unit) {
         shadowElevation = 8.dp,
         showDivider = true,
     ) {
-        MiuixDockPill {
-            DockTab(Glyph.SHELVES, "书架", selected = panel == 0, onClick = { onSelect(0) })
-            DockTab(Glyph.GEAR, "设置", selected = panel == 1, onClick = { onSelect(1) })
+        MiuixDockPill(modifier = Modifier.selectableGroup()) {
+            DockTab(
+                Glyph.SHELVES, "书架", selected = panel == 0, onClick = { onSelect(0) },
+                modifier = Modifier.semantics { role = Role.Tab; selected = panel == 0 },
+            )
+            DockTab(
+                Glyph.GEAR, "设置", selected = panel == 1, onClick = { onSelect(1) },
+                modifier = Modifier.semantics { role = Role.Tab; selected = panel == 1 },
+            )
         }
     }
 }
@@ -225,6 +256,7 @@ private fun ShelfDock(panel: Int, onSelect: (Int) -> Unit) {
  */
 @Composable
 private fun ShelfHeader(
+    backdrop: Backdrop,
     compactTitle: String,
     largeTitle: String,
     detail: String,
@@ -245,9 +277,9 @@ private fun ShelfHeader(
         label = "shelf-collapse",
     )
     val collapse: () -> Float = { collapseProgress.value }
-    GradientHeaderScrim {
-        Column(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth().onSizeChanged { onHeaderHeight(it.height) }) {
+    GradientHeaderScrim(backdrop = backdrop) {
+        Column(Modifier.fillMaxWidth().onSizeChanged { onHeaderHeight(it.height) }) {
+            Column(Modifier.fillMaxWidth()) {
                 Row(
                     Modifier.fillMaxWidth()
                         .heightIn(min = 48.dp)
@@ -342,14 +374,15 @@ private fun ShelfSearchRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ControlGap),
     ) {
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
         InputField(
             query = query,
             onQueryChange = onQueryChange,
             onSearch = { focusManager.clearFocus() },
             expanded = true,
             onExpandedChange = { },
-            modifier = Modifier.weight(1f),
-            label = "搜索书名或作者",
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "搜索书名、作者或格式" },
+            label = "搜索书名、作者或格式",
             leadingIcon = {
                 Box(Modifier.padding(start = 14.dp, end = 8.dp)) {
                     MiuixGlyph(Glyph.SEARCH, MiuixTheme.colorScheme.onSurfaceVariantSummary, 18.dp)
@@ -370,6 +403,18 @@ private fun ShelfSearchRow(
                 }
             },
         )
+        // Miuix 0.9.4 hides its label while expanded, so keep a visible empty-state hint.
+        if (query.isEmpty()) {
+            Text(
+                "搜索书名、作者或格式",
+                modifier = Modifier.padding(start = 40.dp, end = 8.dp).clearAndSetSemantics { },
+                style = MiuixTheme.textStyles.footnote1,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        }
         MiuixCircleButton(Glyph.CLOSE, "收起搜索", onCollapse, size = CircleControlSize)
     }
 }
@@ -385,7 +430,7 @@ private fun ShelfGridPane(
     enabled: Boolean,
     topPadding: Dp,
     state: LazyGridState,
-    onOpen: (ShelfBook) -> Unit,
+    onOpen: (ShelfBook, Offset?) -> Unit,
     onDelete: (ShelfBook) -> Unit,
     onImport: () -> Unit,
     onClearSearch: () -> Unit,
@@ -412,7 +457,7 @@ private fun ShelfGridPane(
             val hero = continuing
             if (query.isBlank() && hero != null) {
                 item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
-                    ContinueReadingHero(hero, enabled) { onOpen(hero) }
+                    ContinueReadingHero(hero, enabled) { origin -> onOpen(hero, origin) }
                 }
             }
             item(key = "section", span = { GridItemSpan(maxLineSpan) }) {
@@ -424,14 +469,14 @@ private fun ShelfGridPane(
             }
             if (books.isEmpty()) {
                 item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
-                    ShelfEmptyCard(query.isBlank(), enabled, onImport, onClearSearch)
+                    ShelfEmptyCard(query.isNotBlank(), enabled, onImport, onClearSearch)
                 }
             }
             items(books, key = { it.id }, contentType = { layout }) { book ->
                 when (layout) {
-                    ShelfLayout.GRID -> ShelfCoverTile(book, enabled, { onOpen(book) }, { onDelete(book) })
-                    ShelfLayout.LIST -> ShelfListRow(book, enabled, false, { onOpen(book) }, { onDelete(book) })
-                    ShelfLayout.COMPACT -> ShelfListRow(book, enabled, true, { onOpen(book) }, { onDelete(book) })
+                    ShelfLayout.GRID -> ShelfCoverTile(book, enabled, { origin -> onOpen(book, origin) }, { onDelete(book) })
+                    ShelfLayout.LIST -> ShelfListRow(book, enabled, false, { origin -> onOpen(book, origin) }, { onDelete(book) })
+                    ShelfLayout.COMPACT -> ShelfListRow(book, enabled, true, { origin -> onOpen(book, origin) }, { onDelete(book) })
                 }
             }
             item(key = "local-note", span = { GridItemSpan(maxLineSpan) }) {

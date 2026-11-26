@@ -20,6 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import top.yukonga.miuix.kmp.blur.Backdrop
+import top.yukonga.miuix.kmp.blur.progressiveTextureBlur
+import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -50,22 +54,26 @@ internal val ControlGap = 12.dp
 internal val PageMargin = 20.dp
 internal val CircleControlSize = 40.dp
 
-/**
- * Header/backdrop used by the shelf: an opaque-to-transparent vertical wash from the
- * Miuix surface colour, so scrolled content dissolves instead of being cut by a divider.
- * (Gradient-based to stay identical on iOS and desktop; no backdrop-blur shader.)
+/** A captured sibling content layer is progressively blurred behind the header.
+ * The translucent surface wash is also the fallback where runtime shaders are unavailable.
+ * Capture must exclude this header to avoid sampling the effect into itself.
  */
 @Composable
-internal fun GradientHeaderScrim(content: @Composable BoxScope.() -> Unit) {
+internal fun GradientHeaderScrim(backdrop: Backdrop? = null, content: @Composable BoxScope.() -> Unit) {
     val surface = MiuixTheme.colorScheme.surface
+    val useBlur = backdrop != null && isRuntimeShaderSupported()
+    val blur = if (useBlur) {
+        Modifier.progressiveTextureBlur(backdrop = backdrop, shape = RectangleShape, blurRadius = 22f)
+    } else Modifier
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .then(blur)
             .background(
                 Brush.verticalGradient(
-                    0f to surface,
-                    0.55f to surface.copy(alpha = 0.94f),
-                    0.82f to surface.copy(alpha = 0.55f),
+                    0f to surface.copy(alpha = if (useBlur) 0.84f else 1f),
+                    0.55f to surface.copy(alpha = if (useBlur) 0.72f else 0.94f),
+                    0.82f to surface.copy(alpha = 0.42f),
                     1f to Color.Transparent,
                 ),
             ),
