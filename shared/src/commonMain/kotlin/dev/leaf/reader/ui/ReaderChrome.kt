@@ -1,6 +1,8 @@
 package dev.leaf.reader.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -40,11 +42,12 @@ internal fun BoxScope.ReaderChrome(
     onDirectory: () -> Unit,
     onSettings: () -> Unit,
 ) {
+    val reducedMotion = LocalReducedMotion.current
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically(tween(ReaderChromeEnterMillis, easing = MiuixEaseOut)) { -it } +
+        enter = if (reducedMotion) EnterTransition.None else slideInVertically(tween(ReaderChromeEnterMillis, easing = MiuixEaseOut)) { -it } +
             fadeIn(tween(ReaderChromeEnterMillis)),
-        exit = slideOutVertically(tween(ReaderChromeExitMillis, easing = MiuixEaseIn)) { -it } +
+        exit = if (reducedMotion) ExitTransition.None else slideOutVertically(tween(ReaderChromeExitMillis, easing = MiuixEaseIn)) { -it } +
             fadeOut(tween(ReaderChromeExitMillis)),
         modifier = Modifier.align(Alignment.TopCenter),
     ) {
@@ -66,9 +69,9 @@ internal fun BoxScope.ReaderChrome(
     }
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically(tween(ReaderChromeEnterMillis, easing = MiuixEaseOut)) { it } +
+        enter = if (reducedMotion) EnterTransition.None else slideInVertically(tween(ReaderChromeEnterMillis, easing = MiuixEaseOut)) { it } +
             fadeIn(tween(ReaderChromeEnterMillis)),
-        exit = slideOutVertically(tween(ReaderChromeExitMillis, easing = MiuixEaseIn)) { it } +
+        exit = if (reducedMotion) ExitTransition.None else slideOutVertically(tween(ReaderChromeExitMillis, easing = MiuixEaseIn)) { it } +
             fadeOut(tween(ReaderChromeExitMillis)),
         modifier = Modifier.align(Alignment.BottomCenter),
     ) {

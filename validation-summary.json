@@ -1,12 +1,12 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "date": "2026-11-26",
   "shared_desktop_compilation": "passed: Gradle :shared:desktopTest on Linux/JDK 17",
-  "kotlin_test_results": {"tests": 70, "failures": 0, "errors": 0, "skipped": 0, "note": "logic and source-structure tests; no simulated UI clicks"},
-  "python_script_tests": {"tests": 34, "failures": 0},
+  "kotlin_test_results": {"tests": 90, "failures": 0, "errors": 0, "skipped": 0, "note": "includes scripted pointer detectors and source checks; not device rendering"},
+  "python_script_tests": {"tests": 44, "failures": 0},
   "apple_framework_and_swift": "not run; requires macOS/Xcode",
-  "ipa_build": "not run for v0.5",
-  "device_rendering_and_performance": "not tested: iOS 16:9, text blur, status bar, popup interaction, accessibility and performance",
+  "ipa_build": "not run for v0.5.1",
+  "device_rendering_and_performance": "not tested: iOS Reduce Motion, gestures, 16:9, VoiceOver, materials and performance",
   "github_workflow_dispatch": "not performed",
   "known_build_fixes_preserved": ["POSIX storage", "lipo -archs", "Xcode selection", "IPA upload before native tests"]
 }

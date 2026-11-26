@@ -71,6 +71,22 @@ REQUIRED_V05_FILES = [
     '.github/workflows/upgrade-v05.yml',
     'scripts/tests/test_upgrade_v05.py',
 ]
+REQUIRED_V051_FILES = [
+    'UPGRADE-v0.5.1.md',
+    '.github/workflows/upgrade-v051.yml',
+    'scripts/tests/test_upgrade_v051.py',
+]
+# Release-approved expect/actual accessibility and regression files. Every
+# platform counterpart is mandatory, including native tests not run on desktop.
+REQUIRED_V051_SOURCE_FILES = [
+    'shared/src/commonMain/kotlin/dev/leaf/reader/ReduceMotion.kt',
+    'shared/src/iosMain/kotlin/dev/leaf/reader/ReduceMotion.ios.kt',
+    'shared/src/desktopMain/kotlin/dev/leaf/reader/ReduceMotion.desktop.kt',
+    'shared/src/commonTest/kotlin/dev/leaf/reader/ReduceMotionTest.kt',
+    'shared/src/desktopTest/kotlin/dev/leaf/reader/ReduceMotionDesktopTest.kt',
+    'shared/src/iosTest/kotlin/dev/leaf/reader/ReduceMotionIosTest.kt',
+    'shared/src/commonTest/kotlin/dev/leaf/reader/ui/ReaderGestureContractTest.kt',
+]
 # Release-approved critical regression files; absence is a packaging error.
 # Dynamic discovery supplements, never replaces, these hard checks.
 REQUIRED_V05_SOURCE_FILES = [
@@ -93,7 +109,11 @@ DISCOVER_TREES = (
 )
 # desktopTest was absent in older source releases; v0.5's explicit mandatory
 # ReaderHostStructureTest above guarantees this tree exists for current packing.
-OPTIONAL_DISCOVER_TREES = ('shared/src/desktopTest/kotlin/dev/leaf/reader',)
+OPTIONAL_DISCOVER_TREES = (
+    'shared/src/desktopTest/kotlin/dev/leaf/reader',
+    'shared/src/desktopMain/kotlin/dev/leaf/reader',
+    'shared/src/iosTest/kotlin/dev/leaf/reader',
+)
 DISCOVER_SUFFIXES = ('.kt', '.swift', '.md')
 PATCH_ONLY = {'shared/build.gradle.kts', 'iosApp/project.yml'}
 
@@ -125,7 +145,10 @@ def release_profile(version):
         return [], MATERIAL_DEPENDENCIES_V04
     if version in ('0.5', '0.5.0'):
         return REQUIRED_V05_FILES + REQUIRED_V05_SOURCE_FILES, MATERIAL_DEPENDENCIES_V05
-    raise ValueError('Supported installer versions: 0.4 and 0.5')
+    if version == '0.5.1':
+        return (REQUIRED_V05_FILES + REQUIRED_V05_SOURCE_FILES +
+                REQUIRED_V051_FILES + REQUIRED_V051_SOURCE_FILES), MATERIAL_DEPENDENCIES_V05
+    raise ValueError('Supported installer versions: 0.4, 0.5 and 0.5.1')
 
 
 def discover_source_files(root, version='0.5'):
@@ -172,9 +195,12 @@ def assemble_installer(root, version='0.5', build_number=None):
     if not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', version):
         raise ValueError('Use a numeric version, for example 0.5 or 0.5.0')
     marketing = version if version.count('.') == 2 else version + '.0'
-    build_number = str(build_number) if build_number is not None else str(int(version.split('.')[1]))
+    default_build = 6 if version == '0.5.1' else int(version.split('.')[1])
+    build_number = str(build_number) if build_number is not None else str(default_build)
     if not re.fullmatch(r'[1-9][0-9]*', build_number):
         raise ValueError('Build number must be a positive integer')
+    if version == '0.5.1' and int(build_number) < 6:
+        raise ValueError('LeafReader 0.5.1 requires build number 6 or higher')
     _, material_dependencies = release_profile(version)
     names = discover_source_files(root, version)
     runner_path = root / 'tools' / 'upgrade_runner.py'

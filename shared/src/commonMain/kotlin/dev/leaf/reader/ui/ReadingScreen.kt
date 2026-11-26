@@ -1,6 +1,8 @@
 package dev.leaf.reader.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -84,6 +86,7 @@ internal fun reduceReaderPanel(current: ReaderPanel, action: ReaderPanelAction):
 @Composable
 internal fun ReadingScreen(state: LibraryState, store: ReaderStore, onRequestClose: () -> Unit) {
     val book = state.currentBook ?: return
+    val reducedMotion = LocalReducedMotion.current
     var panel by remember(book.id) { mutableStateOf(ReaderPanel.NONE) }
     val directory = panel == ReaderPanel.CONTENTS
     val settingsOpen = panel == ReaderPanel.SETTINGS
@@ -147,8 +150,8 @@ internal fun ReadingScreen(state: LibraryState, store: ReaderStore, onRequestClo
             }
         }
         AnimatedVisibility(visible = directory, modifier = Modifier.fillMaxSize(),
-            enter = slideInVertically(tween(280, easing = MiuixEaseOut)) { it } + fadeIn(tween(180)),
-            exit = slideOutVertically(tween(220, easing = MiuixEaseIn)) { it } + fadeOut(tween(180))) {
+            enter = if (reducedMotion) EnterTransition.None else slideInVertically(tween(280, easing = MiuixEaseOut)) { it } + fadeIn(tween(180)),
+            exit = if (reducedMotion) ExitTransition.None else slideOutVertically(tween(220, easing = MiuixEaseIn)) { it } + fadeOut(tween(180))) {
             ContentsScreen(book = book, manifest = state.manifest, currentChapter = state.chapterIndex,
                 onSelectChapter = {
                     if (it != state.chapterIndex) store.selectChapter(it)
@@ -180,6 +183,7 @@ private fun ChapterReader(
 ) {
     val book = state.currentBook ?: return
     val settings = state.settings
+    val reducedMotion = LocalReducedMotion.current
     val density = LocalDensity.current
     val resolver = LocalFontFamilyResolver.current
     val textMeasurer = rememberTextMeasurer(cacheSize = 16)
@@ -328,13 +332,17 @@ private fun ChapterReader(
                 saveAnchor(measured.pages[target].anchor)
                 scope.launch {
                     when (settings.readingMode) {
-                        ReadingMode.SLIDE -> pager.animateScrollToPage(target + firstPage)
+                        ReadingMode.SLIDE -> if (reducedMotion) pager.scrollToPage(target + firstPage) else pager.animateScrollToPage(target + firstPage)
                         ReadingMode.INSTANT -> instantPage = target
-                        ReadingMode.SCROLL -> list.animateScrollToItem(target)
+                        ReadingMode.SCROLL -> if (reducedMotion) list.scrollToItem(target) else list.animateScrollToItem(target)
                     }
                 }
             }
         }
+        // Keep taps on the parent and dragging on the mode-specific child. In Compose 1.12,
+        // detectTapGestures invokes onTap only after an unconsumed up, and cancels when child
+        // movement is consumed in Main or Final (Pager / LazyColumn / instant detector).
+        // Do not eagerly turn on down, consume Initial, or sequence tap+drag in one input block.
         val tapModifier = Modifier.pointerInput(settings.readingMode, ready, visiblePage, state.chromeVisible) {
             detectTapGestures { position ->
                 when (readerTapAction(position.x / size.width.toFloat(), settings.readingMode != ReadingMode.SCROLL)) {
@@ -372,6 +380,8 @@ private fun ChapterReader(
                     ReadingMode.INSTANT -> {
                         var drag by remember { mutableFloatStateOf(0f) }
                         Box(viewport.pointerInput(ready, visiblePage) {
+                            // Foundation accepts an already-consumed down and claims movement
+                            // after touch slop, cancelling the parent's pending tap automatically.
                             detectHorizontalDragGestures(onDragStart = { drag = 0f },
                                 onDragEnd = { if (abs(drag) > 48.dp.toPx()) move(if (drag < 0) 1 else -1) },
                                 onHorizontalDrag = { change, amount -> change.consume(); drag += amount })

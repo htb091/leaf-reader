@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +39,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.leaf.reader.*
+import dev.leaf.reader.rememberReduceMotion
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
@@ -46,6 +49,8 @@ import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
+
+internal val LocalReducedMotion = staticCompositionLocalOf { false }
 
 /** Keep the shelf mounted under the reading layer. The same progress drives the
  * entire reader surface in both directions; book state survives until exit ends.
@@ -60,6 +65,8 @@ fun ReaderApp(store: ReaderStore, onImportRequested: () -> Unit) {
         ReaderTheme.DARK -> darkColorScheme()
         ReaderTheme.SYSTEM -> if (systemDark) darkColorScheme() else lightColorScheme()
     }
+    val reducedMotion by rememberReduceMotion()
+    CompositionLocalProvider(LocalReducedMotion provides reducedMotion) {
     MiuixTheme(colors = colors) {
         // Root overlay host is needed by global error dialogs. Child screens may
         // use their own local hosts, without consuming the window's safe insets.
@@ -76,8 +83,20 @@ fun ReaderApp(store: ReaderStore, onImportRequested: () -> Unit) {
         LaunchedEffect(book?.id) {
             closing = false
             if (book != null) {
-                entrance.snapTo(0f)
-                entrance.animateTo(1f, animationSpec = bookOpen())
+                if (reducedMotion) entrance.snapTo(1f)
+                else {
+                    entrance.snapTo(0f)
+                    entrance.animateTo(1f, animationSpec = bookOpen())
+                }
+            }
+        }
+        LaunchedEffect(reducedMotion) {
+            if (reducedMotion && book != null) {
+                if (closing) {
+                    val closingBookId = book.id
+                    entrance.snapTo(0f)
+                    if (store.state.value.currentBook?.id == closingBookId) store.closeBook()
+                } else entrance.snapTo(1f)
             }
         }
         Box(Modifier.fillMaxSize().onSizeChanged { rootSize = it }.background(MiuixTheme.colorScheme.surface)) {
@@ -123,7 +142,8 @@ fun ReaderApp(store: ReaderStore, onImportRequested: () -> Unit) {
                                 // A resized or rotated window uses the centered fallback above.
                                 val closingBookId = book.id
                                 scope.launch {
-                                    entrance.animateTo(0f, animationSpec = bookClose())
+                                    if (reducedMotion) entrance.snapTo(0f)
+                                    else entrance.animateTo(0f, animationSpec = bookClose())
                                     if (store.state.value.currentBook?.id == closingBookId) store.closeBook()
                                 }
                             }
@@ -176,5 +196,6 @@ fun ReaderApp(store: ReaderStore, onImportRequested: () -> Unit) {
             }
         }
         }
+    }
     }
 }

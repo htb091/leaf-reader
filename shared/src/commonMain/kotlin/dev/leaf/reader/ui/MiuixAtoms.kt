@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -83,7 +84,7 @@ internal fun GradientHeaderScrim(backdrop: Backdrop? = null, content: @Composabl
     }
 }
 
-/** Circular 40dp Miuix floating control (squircle-ish pill, soft shadow, generous gap). */
+/** Circular visual control with a separate minimum 44dp interactive target. */
 @Composable
 internal fun MiuixCircleButton(
     glyph: Glyph,
@@ -97,9 +98,8 @@ internal fun MiuixCircleButton(
 ) {
     Box(
         modifier = modifier
-            .size(size)
-            .clip(RoundedCornerShape(size / 2))
-            .background(container)
+            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
+            .size(size.coerceAtLeast(44.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics {
                 role = Role.Button
@@ -107,7 +107,14 @@ internal fun MiuixCircleButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        MiuixGlyph(glyph, if (enabled) tint else tint.copy(alpha = 0.4f), size * 0.55f)
+        Box(
+            modifier = Modifier.size(size)
+                .clip(RoundedCornerShape(size / 2))
+                .background(container),
+            contentAlignment = Alignment.Center,
+        ) {
+            MiuixGlyph(glyph, if (enabled) tint else tint.copy(alpha = 0.4f), size * 0.55f)
+        }
     }
 }
 

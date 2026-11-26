@@ -1,5 +1,12 @@
 # 验证状态
 
+## v0.5.1（2026-11-26）
+
+- Linux aarch64 / JDK 17 实际运行 `:shared:desktopTest`：90 项，0 失败、0 错误、0 跳过；其中 8 项使用模拟 PointerInput 事件测试 Compose 检测器，并非真实设备手势或图形测试。
+- `scripts/check_project.py`、44 项 Python 脚本测试、`bash -n` 和 `git diff --check` 均通过。
+- 生成书封的对比值是按代码色彩组合计算，不是设备截图测量。
+- iOS Kotlin/Native 编译、UIKit 减少动态通知、Miuix 内部动画、16:9、VoiceOver 与 IPA 安装尚未实机验证。新增的 iOS 通知测试须在支持模拟器的 Apple CI 上运行。
+
 ## v0.5（2026-11-26）
 
 - Linux aarch64 / JDK 17 执行 `:shared:desktopTest`：70 项、0 失败、0 错误、0 跳过。其中 4 项是源码结构检查，不是触屏或渲染测试。

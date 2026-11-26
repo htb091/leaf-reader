@@ -3,6 +3,8 @@ package dev.leaf.reader.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -142,6 +144,7 @@ internal fun ShelfScreen(
         provider
     }
     val shelfMode = panel == 0
+    val reducedMotion = LocalReducedMotion.current
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -167,7 +170,8 @@ internal fun ShelfScreen(
                     modifier = Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
                     transitionSpec = {
                         val direction = if (targetState > initialState) 1 else -1
-                        ContentTransform(
+                        if (reducedMotion) ContentTransform(EnterTransition.None, ExitTransition.None)
+                        else ContentTransform(
                             targetContentEnter = slideInHorizontally(tween(280, easing = MiuixEaseOut)) { it * direction } + fadeIn(tween(180)),
                             initialContentExit = slideOutHorizontally(tween(280, easing = MiuixEaseOut)) { -it * direction } + fadeOut(tween(180)),
                         )
@@ -264,6 +268,7 @@ internal fun ShelfScreen(
 /** One compact floating surface with a shared, smoothly moving selection pill. */
 @Composable
 private fun ShelfDock(panel: Int, backdrop: Backdrop?, onSelect: (Int) -> Unit) {
+    val reducedMotion = LocalReducedMotion.current
     val shape = RoundedCornerShape(999.dp)
     val surface = MiuixTheme.colorScheme.surfaceContainerHigh
     val material = if (backdrop != null && isRuntimeShaderSupported()) {
@@ -283,7 +288,7 @@ private fun ShelfDock(panel: Int, backdrop: Backdrop?, onSelect: (Int) -> Unit) 
             val tabWidth = maxWidth / 2
             val indicatorOffset by animateDpAsState(
                 targetValue = if (panel == 0) 0.dp else tabWidth,
-                animationSpec = tween(280, easing = MiuixEaseOut),
+                animationSpec = tween(if (reducedMotion) 0 else 280, easing = MiuixEaseOut),
                 label = "dock-selection",
             )
             Box(
@@ -332,9 +337,10 @@ private fun ShelfHeader(
     onQueryChange: (String) -> Unit,
     onCollapseSearch: () -> Unit,
 ) {
+    val reducedMotion = LocalReducedMotion.current
     val collapseProgress = animateFloatAsState(
         targetValue = collapseTarget(),
-        animationSpec = tween(140, easing = MiuixEaseOut),
+        animationSpec = tween(if (reducedMotion) 0 else 140, easing = MiuixEaseOut),
         label = "shelf-collapse",
     )
     val collapse: () -> Float = { collapseProgress.value }
@@ -352,7 +358,7 @@ private fun ShelfHeader(
                         modifier = Modifier.weight(1f).graphicsLayer {
                             val appear = ((collapse() - 0.55f) / 0.45f).coerceIn(0f, 1f)
                             alpha = appear
-                            translationY = (1f - appear) * 6.dp.toPx()
+                            translationY = if (reducedMotion) 0f else (1f - appear) * 6.dp.toPx()
                         },
                         style = MiuixTheme.textStyles.title3,
                         fontWeight = FontWeight.SemiBold,
@@ -383,7 +389,7 @@ private fun ShelfHeader(
                         modifier = Modifier.graphicsLayer {
                             val progress = collapse()
                             alpha = (1f - progress * 1.15f).coerceIn(0f, 1f)
-                            val scale = 1f - progress * 0.32f
+                            val scale = if (reducedMotion) 1f else 1f - progress * 0.32f
                             scaleX = scale
                             scaleY = scale
                             transformOrigin = TransformOrigin(0f, 0.85f)
@@ -408,8 +414,8 @@ private fun ShelfHeader(
             }
             AnimatedVisibility(
                 visible = searching,
-                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+                enter = if (reducedMotion) EnterTransition.None else expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = if (reducedMotion) ExitTransition.None else shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
             ) {
                 ShelfSearchRow(
                     query = query,

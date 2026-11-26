@@ -17,6 +17,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -332,7 +333,8 @@ private fun BookCover(book: ShelfBook, modifier: Modifier, small: Boolean = fals
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(radius))
-            .background(Brush.linearGradient(listOf(color, color.copy(alpha = 0.76f))))
+            // Opaque stops keep cover text independent of the host's light or dark surface.
+            .background(Brush.linearGradient(listOf(color, lerp(color, Color.Black, 0.12f))))
             .clearAndSetSemantics { },
     ) {
         Box(
@@ -345,9 +347,9 @@ private fun BookCover(book: ShelfBook, modifier: Modifier, small: Boolean = fals
         ) {
             Text(
                 book.format,
-                fontSize = if (small) 8.sp else 9.sp,
-                color = Color.White.copy(alpha = 0.72f),
-                letterSpacing = 1.sp,
+                fontSize = 12.sp,
+                color = Color.White,
+                letterSpacing = 0.5.sp,
                 maxLines = 1,
             )
             Text(
@@ -362,8 +364,8 @@ private fun BookCover(book: ShelfBook, modifier: Modifier, small: Boolean = fals
             if (!small) {
                 Text(
                     book.author.ifBlank { "叶读 · 本地藏书" },
-                    fontSize = 10.sp,
-                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 12.sp,
+                    color = Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
