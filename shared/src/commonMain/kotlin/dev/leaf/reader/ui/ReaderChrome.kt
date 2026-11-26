@@ -7,12 +7,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -59,7 +61,6 @@ internal fun BoxScope.ReaderChrome(
                 Text(title, Modifier.weight(1f), fontSize = 15.sp,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1,
                     overflow = TextOverflow.Ellipsis)
-                ReaderIconButton(Glyph.TOC, "打开目录", onDirectory)
             }
         }
     }
@@ -77,7 +78,8 @@ internal fun BoxScope.ReaderChrome(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            MiuixDockPill(Modifier.widthIn(max = 640.dp).fillMaxWidth()) {
+            MiuixDockPill(Modifier.widthIn(max = 640.dp).fillMaxWidth(), backdrop = backdrop,
+                verticalPadding = ReaderDockVerticalPaddingDp.dp) {
                 ReaderDockAction(Glyph.BOOK, "目录", onDirectory)
                 Text(progressText, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
                     fontSize = 12.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -89,7 +91,7 @@ internal fun BoxScope.ReaderChrome(
     }
 }
 
-/** Actual Miuix 0.9.4 IconButton API, with 48dp circular surface and a soft floating shadow. */
+/** The shelf's 40dp circle inside a separate 44dp Miuix IconButton touch target. */
 @Composable
 internal fun ReaderIconButton(
     glyph: Glyph,
@@ -102,22 +104,25 @@ internal fun ReaderIconButton(
     val colors = MiuixTheme.colorScheme
     IconButton(
         onClick = onClick,
-        modifier = modifier.size(48.dp).shadow(3.dp, CircleShape)
-            .border(1.dp, colors.onSurface.copy(alpha = 0.07f), CircleShape)
-            .semantics { contentDescription = description },
+        modifier = modifier.size(ReaderControlTouchDp.dp).semantics { contentDescription = description },
         enabled = enabled,
-        minWidth = 48.dp,
-        minHeight = 48.dp,
-        cornerRadius = 24.dp,
-        backgroundColor = if (highlighted) colors.primaryContainer else colors.surfaceContainerHigh,
+        minWidth = ReaderControlTouchDp.dp,
+        minHeight = ReaderControlTouchDp.dp,
+        cornerRadius = 22.dp,
+        backgroundColor = Color.Transparent,
     ) {
-        MiuixGlyph(glyph, if (highlighted) colors.onPrimaryContainer else colors.onSurface, 22.dp)
+        Box(Modifier.size(ReaderControlVisualDp.dp).shadow(2.dp, CircleShape)
+            .border(1.dp, colors.onSurface.copy(alpha = 0.07f), CircleShape)
+            .background(if (highlighted) colors.primaryContainer else colors.surfaceContainerHigh, CircleShape),
+            contentAlignment = Alignment.Center) {
+            MiuixGlyph(glyph, if (highlighted) colors.onPrimaryContainer else colors.onSurface, 20.dp)
+        }
     }
 }
 
 @Composable
 private fun ReaderDockAction(glyph: Glyph, label: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, minHeight = 48.dp, minWidth = 64.dp, cornerRadius = 24.dp,
+    IconButton(onClick = onClick, minHeight = ReaderControlTouchDp.dp, minWidth = 64.dp, cornerRadius = 24.dp,
         modifier = Modifier.semantics { contentDescription = label }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             MiuixGlyph(glyph, MiuixTheme.colorScheme.onSurface, 20.dp)
@@ -136,6 +141,13 @@ internal fun readerTapAction(horizontalFraction: Float, paged: Boolean): ReaderT
     horizontalFraction < 0.32f -> ReaderTapAction.PREVIOUS_PAGE
     else -> ReaderTapAction.NEXT_PAGE
 }
+
+internal const val ReaderControlVisualDp = 40f
+internal const val ReaderControlTouchDp = 44f
+internal const val ReaderDockVerticalPaddingDp = 4f
+// 44dp actions + 8dp padding = 52dp, versus the previous 48 + 20 = 68dp.
+// Only minimums are specified; dynamic text can grow the dock instead of being clipped.
+internal const val ReaderDockMinimumHeightDp = ReaderControlTouchDp + 2 * ReaderDockVerticalPaddingDp
 
 internal const val ReaderChromeEnterMillis = 240
 internal const val ReaderChromeExitMillis = 200

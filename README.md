@@ -1,6 +1,12 @@
-# 叶读 · Leaf Reader v0.4
+# 叶读 · Leaf Reader v0.5
 
 面向 iOS16+ 的本地小说阅读器，Kotlin Multiplatform / Compose Multiplatform / Miuix 0.9.4。使用 GitHub Actions 构建未签名 ARM64 IPA，交给兼容设备上的 TrollStore 安装。
+
+## v0.5 界面修复
+
+- 修正模糊背景透明采样造成的文字色块，材质延伸到状态栏区域。
+- 书架/设置页滑动切换，悬浮栏高亮平滑移动，设置采用 Miuix 弹出列表。
+- 修复阅读设置缺少弹窗宿主；精简阅读底栏与目录行，适配短屏。
 
 ## v0.4 视觉与动效
 
@@ -23,11 +29,11 @@
 - 大书文件流导入、正文按章存储、按章读取。TXT 输入上限512MiB，EPUB输入上限1GiB；这些数值是校验上限，不是真机跑满的承诺。
 - 兼容旧索引/正文的渐进迁移；保留已修好的 POSIX 存储和 lipo -archs 构建链。
 
-详细范围与限制见 [v0.4 说明](<UPGRADE-v0.4.md>)、[v0.3 说明](<UPGRADE-v0.3.md>)、[v0.2 说明](<UPGRADE-v0.2.md>)、[验证记录](<VALIDATION.md>)。
+详细范围与限制见 [v0.5 说明](<UPGRADE-v0.5.md>)、[v0.4 说明](<UPGRADE-v0.4.md>)、[v0.3 说明](<UPGRADE-v0.3.md>)、[v0.2 说明](<UPGRADE-v0.2.md>)、[验证记录](<VALIDATION.md>)。
 
 ## GitHub Actions
 
-已有工程：把下载的 `LeafReader-v0.4-upgrade.py` 放到仓库根目录，把 `upgrade-v04.yml` 放到 `.github/workflows/`，手动运行 **Build LeafReader v0.4**。升级器明文可审阅、标准库、自包含；备份被覆盖的源码，不读取凭据，不自动提交或推送。
+已有工程：把下载的 `LeafReader-v0.5-upgrade.py` 放到仓库根目录，把 `upgrade-v05.yml` 放到 `.github/workflows/`，手动运行 **Build LeafReader v0.5**。升级器明文可审阅、标准库、自包含；备份被覆盖的源码，不读取凭据，不自动提交或推送。
 
 工作流会应用升级、运行共享测试、构建静态 Shared.framework / iOS App、上传 IPA 和完整升级源码，再跑原生导入测试。升级后的源码 artifact 可作为以后直接维护的仓库内容，不需要永久依赖补丁升级器。
 

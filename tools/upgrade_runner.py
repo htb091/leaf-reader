@@ -49,6 +49,11 @@ EXCLUDED_SUFFIXES = (
     '.key', '.keystore', '.jks', '.mobileprovision', '.xcuserstate',
 )
 MIUIX_COORDINATE = 'top.yukonga.miuix.kmp:'
+# The packer injects the release-approved coordinates. This legacy default keeps
+# the v0.4 runtime/test contract; v0.5 coordinates are confirmed by the Lead.
+REQUIRED_MATERIAL_DEPENDENCIES = globals().get('REQUIRED_MATERIAL_DEPENDENCIES', (
+    'top.yukonga.miuix.kmp:miuix-blur:0.9.4',
+))
 
 
 def sha256_bytes(payload):
@@ -130,8 +135,9 @@ def patch_project_yml(text):
 def mask_gradle_comments(text):
     """Keep character offsets/newlines while hiding // and nested /* comments.
 
-    Ordinary/triple strings and character literals retain their contents; comment
-    markers inside them do not swallow subsequent dependency declarations.
+    Ordinary quoted coordinates retain contents. Raw multiline strings are masked
+    so example dependency lines inside them never become real patch anchors;
+    comment markers in literals do not swallow later dependency declarations.
     """
     out = list(text)
     index = 0
@@ -161,9 +167,12 @@ def mask_gradle_comments(text):
                 index += 1
         elif state == 'triple':
             if text.startswith('"""', index):
+                out[index:index + 3] = '   '
                 state = 'code'
                 index += 3
             else:
+                if text[index] not in '\r\n':
+                    out[index] = ' '
                 index += 1
         elif state in ('"', "'"):
             if text[index] == '\\':
@@ -183,6 +192,7 @@ def mask_gradle_comments(text):
             out[index:index + 2] = '  '
             index += 2
         elif text.startswith('"""', index):
+            out[index:index + 3] = '   '
             state = 'triple'
             index += 3
         elif text[index] in ('"', "'"):
@@ -193,35 +203,48 @@ def mask_gradle_comments(text):
     return ''.join(out)
 
 
-def patch_shared_gradle(text):
-    """Insert one pinned blur dependency beside miuix-ui, never replace the file.
+def patch_shared_gradle(text, requirements=None):
+    """Insert only approved missing coordinates beside miuix-ui, never replace.
 
-    An existing pinned implementation is already satisfied. Ambiguous duplicates,
-    conflicting versions and an absent ui anchor fail before any project writes.
+    Existing exact dependencies are satisfied. Every required version and the
+    insertion anchor are checked before returning any patch. Different groups
+    are supported without assuming a material API or choosing release versions.
     """
+    requirements = REQUIRED_MATERIAL_DEPENDENCIES if requirements is None else requirements
+    required = {}
+    for coordinate in requirements:
+        if not isinstance(coordinate, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+', coordinate):
+            raise ValueError('Expected an exact group:artifact:version material coordinate')
+        group, artifact, version = coordinate.split(':')
+        key = group + ':' + artifact
+        if key in required:
+            raise ValueError('Duplicate material requirement: %s' % key)
+        required[key] = (version, coordinate)
     active = mask_gradle_comments(text)
     dependency = re.compile(
-        r'(?m)^([ \t]*)implementation[ \t]*\([ \t]*"' +
-        re.escape(MIUIX_COORDINATE) +
-        r'(miuix-ui|miuix-blur):([^"\r\n]+)"[ \t]*\)'
+        r'(?m)^([ \t]*)implementation[ \t]*\([ \t]*"'
+        r'([^":\r\n]+:[^":\r\n]+):([^"\r\n]+)"[ \t]*\)'
         r'[ \t]*;?[ \t]*(\r?\n|$)'
     )
     declarations = list(dependency.finditer(active))
-    blur = [match for match in declarations if match.group(2) == 'miuix-blur']
-    if blur:
-        if len(blur) != 1 or blur[0].group(3) != '0.9.4':
-            raise ValueError('Existing miuix-blur must be one implementation pinned to 0.9.4')
+    missing = []
+    for key, (version, coordinate) in required.items():
+        found = [match for match in declarations if match.group(2) == key]
+        if found:
+            if len(found) != 1 or found[0].group(3) != version:
+                raise ValueError('Existing %s must be one implementation pinned to %s' % (key, version))
+        elif key + ':' in active:
+            raise ValueError('Unrecognized dependency %s; review shared/build.gradle.kts' % key)
+        else:
+            missing.append(coordinate)
+    if not missing:
         return text
-    # Detect common incompatible dependency spellings rather than silently adding
-    # a second blur line. Catalog aliases are not guessed by this offline patcher.
-    if MIUIX_COORDINATE + 'miuix-blur:' in active:
-        raise ValueError('Unrecognized miuix-blur declaration; review shared/build.gradle.kts')
-    anchors = [match for match in declarations if match.group(2) == 'miuix-ui' and match.group(3) == '0.9.4']
+    anchors = [match for match in declarations if match.group(2) == MIUIX_COORDINATE + 'miuix-ui' and match.group(3) == '0.9.4']
     if len(anchors) != 1:
         raise ValueError('Expected exactly one implementation("%smiuix-ui:0.9.4") anchor' % MIUIX_COORDINATE)
     anchor = anchors[0]
     newline = anchor.group(4) or ('\r\n' if '\r\n' in text else '\n')
-    addition = anchor.group(1) + 'implementation("%smiuix-blur:0.9.4")' % MIUIX_COORDINATE + newline
+    addition = ''.join(anchor.group(1) + 'implementation("%s")' % coordinate + newline for coordinate in missing)
     prefix = text[:anchor.end()]
     if not anchor.group(4):
         prefix += newline
@@ -397,7 +420,8 @@ def apply_upgrade(project, entries, checked):
         'tool': 'LeafReader-v%s-upgrade' % INSTALLER_VERSION,
         'applied_at_utc': timestamp, 'file_count': len(FILES), 'status': 'prepared',
         'verification': checked, 'changes': [],
-        'note': 'Only version scalars and the missing pinned blur dependency are patched in build configuration.',
+        'note': 'Only version scalars and release-approved missing material dependencies are patched in build configuration.',
+        'material_dependencies': list(REQUIRED_MATERIAL_DEPENDENCIES),
     }
     # All originals are backed up before replacing even the first source.
     for entry in entries:

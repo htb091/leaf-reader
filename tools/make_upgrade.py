@@ -2,7 +2,7 @@
 """Pack current LeafReader sources into one offline, inspectable Python installer.
 
 Run only after the release freeze:
-  python3 tools/make_upgrade.py 0.4 OUTPUT.py
+  python3 tools/make_upgrade.py 0.5 OUTPUT.py
 
 Every payload is UTF-8 round-tripped exactly, including its final-newline state.
 All v0.3 payloads remain required. New UI/tests are discovered AND checked against
@@ -66,16 +66,35 @@ REQUIRED_V04_FILES = [
     'tools/make_upgrade.py',
     'tools/upgrade_runner.py',
 ]
-# Lead confirms the exact new directory test name before release packing.
-# Until then discover_source_files also requires a matching directory-test file.
+REQUIRED_V05_FILES = [
+    'UPGRADE-v0.5.md',
+    '.github/workflows/upgrade-v05.yml',
+    'scripts/tests/test_upgrade_v05.py',
+]
+# Release-approved critical regression files; absence is a packaging error.
+# Dynamic discovery supplements, never replaces, these hard checks.
+REQUIRED_V05_SOURCE_FILES = [
+    'shared/src/commonTest/kotlin/dev/leaf/reader/ui/ReaderOverlayRegressionTest.kt',
+    'shared/src/desktopTest/kotlin/dev/leaf/reader/ui/ReaderHostStructureTest.kt',
+]
+MATERIAL_DEPENDENCIES_V04 = ('top.yukonga.miuix.kmp:miuix-blur:0.9.4',)
+# No new material coordinate is chosen without Lead confirmation.
+MATERIAL_DEPENDENCIES_V05 = MATERIAL_DEPENDENCIES_V04
 REQUIRED_DIRECTORY_TESTS = [
     'shared/src/commonTest/kotlin/dev/leaf/reader/ui/ContentsNavigationTest.kt',
     'shared/src/commonTest/kotlin/dev/leaf/reader/ui/ReaderChromeTest.kt',
 ]
 DISCOVER_TREES = (
-    'shared/src/commonMain/kotlin/dev/leaf/reader/ui',
+    'shared/src/commonMain/kotlin/dev/leaf/reader',
     'shared/src/commonTest/kotlin/dev/leaf/reader',
+    'shared/src/iosMain/kotlin/dev/leaf/reader',
+    'iosApp/Sources',
+    'iosApp/Tests',
 )
+# desktopTest was absent in older source releases; v0.5's explicit mandatory
+# ReaderHostStructureTest above guarantees this tree exists for current packing.
+OPTIONAL_DISCOVER_TREES = ('shared/src/desktopTest/kotlin/dev/leaf/reader',)
+DISCOVER_SUFFIXES = ('.kt', '.swift', '.md')
 PATCH_ONLY = {'shared/build.gradle.kts', 'iosApp/project.yml'}
 
 
@@ -101,10 +120,21 @@ def literal(text):
     return candidate
 
 
-def discover_source_files(root):
-    names = set(FILES + REQUIRED_V04_FILES + REQUIRED_DIRECTORY_TESTS)
-    for tree in DISCOVER_TREES:
+def release_profile(version):
+    if version in ('0.4', '0.4.0'):
+        return [], MATERIAL_DEPENDENCIES_V04
+    if version in ('0.5', '0.5.0'):
+        return REQUIRED_V05_FILES + REQUIRED_V05_SOURCE_FILES, MATERIAL_DEPENDENCIES_V05
+    raise ValueError('Supported installer versions: 0.4 and 0.5')
+
+
+def discover_source_files(root, version='0.5'):
+    release_files, _ = release_profile(version)
+    names = set(FILES + REQUIRED_V04_FILES + REQUIRED_DIRECTORY_TESTS + release_files)
+    for tree in DISCOVER_TREES + OPTIONAL_DISCOVER_TREES:
         directory = root / tree
+        if tree in OPTIONAL_DISCOVER_TREES and not directory.exists() and not directory.is_symlink():
+            continue
         if directory.is_symlink() or not directory.is_dir():
             raise ValueError('Missing/linked source tree: %s' % tree)
         for current, directories, files in os.walk(str(directory), followlinks=False):
@@ -114,7 +144,7 @@ def discover_source_files(root):
                     raise ValueError('Linked source directory: %s' % (current / name))
             directories.sort()
             for name in sorted(files):
-                if name.endswith('.kt'):
+                if name.endswith(DISCOVER_SUFFIXES):
                     path = current / name
                     if path.is_symlink():
                         raise ValueError('Linked source file: %s' % path)
@@ -138,14 +168,15 @@ def discover_source_files(root):
     return sorted(names)
 
 
-def assemble_installer(root, version='0.4', build_number=None):
+def assemble_installer(root, version='0.5', build_number=None):
     if not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', version):
-        raise ValueError('Use a numeric version, for example 0.4 or 0.4.0')
+        raise ValueError('Use a numeric version, for example 0.5 or 0.5.0')
     marketing = version if version.count('.') == 2 else version + '.0'
     build_number = str(build_number) if build_number is not None else str(int(version.split('.')[1]))
     if not re.fullmatch(r'[1-9][0-9]*', build_number):
         raise ValueError('Build number must be a positive integer')
-    names = discover_source_files(root)
+    _, material_dependencies = release_profile(version)
+    names = discover_source_files(root, version)
     runner_path = root / 'tools' / 'upgrade_runner.py'
     runner = runner_path.read_bytes().decode('utf-8')
     ast.parse(runner, filename=str(runner_path))
@@ -167,17 +198,18 @@ def assemble_installer(root, version='0.4', build_number=None):
 Usage: python3 LeafReader-v%s-upgrade.py --project PATH [--archive PATH]
 Plain FILES payloads are reviewable. No network, installs, subprocess or Git.
 Embeds %d complete source files; preserves the user's Gradle configuration and
-Bundle ID by patching only pinned miuix-blur and two Xcode version scalars.
+Bundle ID by patching only approved material dependencies and Xcode version scalars.
 All target, Python AST, plist, anchor and payload checks precede source writes.
 Backups, change manifest and payload SHA map live in .leaf-upgrade-backup/.
 Kotlin/Swift compilation and tests remain CI/device verification tasks.
 """
 INSTALLER_VERSION = %r
 VERSION_PATCHES = %r
+REQUIRED_MATERIAL_DEPENDENCIES = %r
 FILES = {
 ''' % (version, version, len(names), version, {
         'MARKETING_VERSION': marketing, 'CURRENT_PROJECT_VERSION': build_number,
-    })
+    }, tuple(material_dependencies))
     source = header + ''.join(parts) + '}\nEXPECTED_PAYLOAD_SHA256 = ' + json.dumps(hashes, indent=4, sort_keys=True) + '\n\n' + runner
     tree = ast.parse(source, filename='LeafReader-upgrade.py')
     assignments = [node for node in tree.body if isinstance(node, ast.Assign) and
@@ -196,7 +228,7 @@ FILES = {
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('version', nargs='?', default='0.4')
+    parser.add_argument('version', nargs='?', default='0.5')
     parser.add_argument('output', nargs='?')
     parser.add_argument('--build-number', type=int)
     args = parser.parse_args(argv)

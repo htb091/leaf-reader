@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import dev.leaf.reader.ShelfBook
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.utils.PressFeedbackType
 
 // Keep coordinates rather than a cached offset: scrolling can move a card between frames.
@@ -418,19 +422,44 @@ internal fun ShelfSettingGroup(title: String, content: @Composable ColumnScope.(
     }
 }
 
-/** Segmented choice with a visible caption, using the contour Miuix tab row. */
+/** Anchored Miuix popup with selected check mark and a compact settings row. */
 @Composable
 internal fun ShelfChoice(label: String, options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MiuixTheme.textStyles.body1)
-        TabRowWithContour(
-            tabs = options,
-            selectedTabIndex = selected.coerceIn(0, options.lastIndex.coerceAtLeast(0)),
-            onTabSelected = onSelect,
-            modifier = Modifier.fillMaxWidth(),
-            minWidth = 56.dp,
-            height = 44.dp,
+    if (options.isEmpty()) return
+    var expanded by remember { mutableStateOf(false) }
+    val index = selected.coerceIn(0, options.lastIndex)
+    Box(Modifier.fillMaxWidth()) {
+        BasicComponent(
+            title = label,
+            insideMargin = PaddingValues(0.dp),
+            onClick = { expanded = true },
+            onClickLabel = "选择$label",
+            endActions = {
+                Text(options[index], color = MiuixTheme.colorScheme.onSurfaceVariantSummary, maxLines = 1)
+                Spacer(Modifier.width(8.dp))
+                DropdownArrowEndAction(MiuixTheme.colorScheme.onSurfaceVariantSummary)
+            },
         )
+        OverlayListPopup(
+            show = expanded,
+            alignment = PopupPositionProvider.Align.End,
+            onDismissRequest = { expanded = false },
+        ) {
+            ListPopupColumn {
+                options.forEachIndexed { optionIndex, option ->
+                    DropdownImpl(
+                        text = option,
+                        optionSize = options.size,
+                        isSelected = optionIndex == index,
+                        index = optionIndex,
+                        onSelectedIndexChange = {
+                            expanded = false
+                            onSelect(it)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -69,12 +69,24 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+internal enum class ReaderPanel { NONE, CONTENTS, SETTINGS }
+internal enum class ReaderPanelAction { OPEN_CONTENTS, OPEN_SETTINGS, CLOSE_CONTENTS, CLOSE_SETTINGS }
+
+/** One panel at a time; delayed dismiss callbacks from a previous panel cannot close a new one. */
+internal fun reduceReaderPanel(current: ReaderPanel, action: ReaderPanelAction): ReaderPanel = when (action) {
+    ReaderPanelAction.OPEN_CONTENTS -> ReaderPanel.CONTENTS
+    ReaderPanelAction.OPEN_SETTINGS -> ReaderPanel.SETTINGS
+    ReaderPanelAction.CLOSE_CONTENTS -> if (current == ReaderPanel.CONTENTS) ReaderPanel.NONE else current
+    ReaderPanelAction.CLOSE_SETTINGS -> if (current == ReaderPanel.SETTINGS) ReaderPanel.NONE else current
+}
+
 /** Only the loaded chapter is measured. currentBook contains chapter titles, never body text. */
 @Composable
 internal fun ReadingScreen(state: LibraryState, store: ReaderStore, onRequestClose: () -> Unit) {
     val book = state.currentBook ?: return
-    var directory by remember(book.id) { mutableStateOf(false) }
-    var settingsOpen by remember(book.id) { mutableStateOf(false) }
+    var panel by remember(book.id) { mutableStateOf(ReaderPanel.NONE) }
+    val directory = panel == ReaderPanel.CONTENTS
+    val settingsOpen = panel == ReaderPanel.SETTINGS
     var showHint by remember(book.id) { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
     LaunchedEffect(book.id, state.chapter != null) {
@@ -91,17 +103,21 @@ internal fun ReadingScreen(state: LibraryState, store: ReaderStore, onRequestClo
     }
     // ReaderApp owns the book transition and keeps shelf/reader state alive until exit finishes.
     val leave = onRequestClose
+    // OverlayBottomSheet/OverlayListPopup register with MiuixPopupHost. A sibling shelf's
+    // Scaffold is not an ancestor host; this local Scaffold makes reader settings render.
+    Scaffold(modifier = Modifier.fillMaxSize(), containerColor = MiuixTheme.colorScheme.surface,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)) {
     BoxWithConstraints(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface)) {
         val settingsMaxHeight = maxHeight * 0.90f
-        Box(Modifier.fillMaxSize().then(if (directory) Modifier.clearAndSetSemantics { } else Modifier)) {
+        Box(Modifier.fillMaxSize().then(if (panel != ReaderPanel.NONE) Modifier.clearAndSetSemantics { } else Modifier)) {
             val chapter = state.chapter
             if (chapter != null && !state.chapterBusy) {
                 key(book.id, state.chapterIndex, chapter) {
                     ChapterReader(state, chapter, store,
                         onToggleChrome = { interaction++; store.setChromeVisible(!store.state.value.chromeVisible) },
                         onInteraction = { interaction++ },
-                        onDirectory = { directory = true },
-                        onSettings = { settingsOpen = true },
+                        onDirectory = { panel = reduceReaderPanel(panel, ReaderPanelAction.OPEN_CONTENTS) },
+                        onSettings = { panel = reduceReaderPanel(panel, ReaderPanelAction.OPEN_SETTINGS) },
                         onClose = leave)
                 }
             } else {
@@ -113,8 +129,11 @@ internal fun ReadingScreen(state: LibraryState, store: ReaderStore, onRequestClo
                     } else {
                         Text("章节尚未载入")
                         TextButton("重试本章", { store.selectChapter(state.chapterIndex) }, minHeight = 48.dp)
-                        TextButton("选择其他章节", { directory = true }, minHeight = 48.dp)
+                        TextButton("选择其他章节", { panel = reduceReaderPanel(panel, ReaderPanelAction.OPEN_CONTENTS) }, minHeight = 48.dp)
                     }
+                    TextButton("阅读设置", {
+                        panel = reduceReaderPanel(panel, ReaderPanelAction.OPEN_SETTINGS)
+                    }, minHeight = 48.dp)
                     TextButton("返回书架", leave, minHeight = 48.dp)
                 }
             }
@@ -133,11 +152,12 @@ internal fun ReadingScreen(state: LibraryState, store: ReaderStore, onRequestClo
             ContentsScreen(book = book, manifest = state.manifest, currentChapter = state.chapterIndex,
                 onSelectChapter = {
                     if (it != state.chapterIndex) store.selectChapter(it)
-                    directory = false
-                }, onDismiss = { directory = false })
+                    panel = reduceReaderPanel(panel, ReaderPanelAction.CLOSE_CONTENTS)
+                }, onDismiss = { panel = reduceReaderPanel(panel, ReaderPanelAction.CLOSE_CONTENTS) })
         }
-        ReadingSettings(settingsOpen, state.settings, store::updateSettings, { settingsOpen = false },
+        ReadingSettings(settingsOpen, state.settings, store::updateSettings, { panel = reduceReaderPanel(panel, ReaderPanelAction.CLOSE_SETTINGS) },
             maxHeight = settingsMaxHeight)
+    }
     }
 }
 
@@ -163,7 +183,11 @@ private fun ChapterReader(
     val density = LocalDensity.current
     val resolver = LocalFontFamilyResolver.current
     val textMeasurer = rememberTextMeasurer(cacheSize = 16)
-    val backdrop = rememberLayerBackdrop()
+    val paper = MiuixTheme.colorScheme.surface
+    // Capture an opaque paper base, not transparent glyphs; updated theme colours are read
+    // through rememberLayerBackdrop's latest onDraw lambda. Chrome is never captured.
+    val backdrop = rememberLayerBackdrop { drawRect(paper); drawContent() }
+    var chromeProgress by remember { mutableStateOf("") }
     val texts = remember(chapter) { chapterReadingTexts(chapter, state.chapterIndex) }
     var stableAnchor by remember { mutableStateOf(clampAnchor(texts,
         TextAnchor(state.currentProgress.paragraphIndex, state.currentProgress.characterOffset))) }
@@ -195,6 +219,10 @@ private fun ChapterReader(
         lineHeight = ((settings.fontSize + 6) * 1.5f).sp,
         fontWeight = FontWeight.Bold, textIndent = TextIndent.None)
 
+    Box(Modifier.fillMaxSize()) {
+    // Full-window capture includes the status-bar band; only its child consumes safeDrawing.
+    // Header and dock remain siblings outside this recorded layer, preventing recursive sampling.
+    Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         val columns = when (settings.columnMode) {
             ColumnMode.SINGLE -> 1
@@ -324,8 +352,7 @@ private fun ChapterReader(
                 CustomAccessibilityAction("上一页") { move(-1); true },
                 CustomAccessibilityAction("下一页") { move(1); true })
         }
-        // Capture only the rendered chapter, never footer/chrome; sampling cannot recurse.
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop).then(tapModifier).then(accessibility)) {
+        Box(Modifier.fillMaxSize().then(tapModifier).then(accessibility)) {
             if (currentLayout == null) {
                 CircularProgressIndicator(Modifier.align(Alignment.Center), size = 28.dp)
             } else {
@@ -381,9 +408,12 @@ private fun ChapterReader(
         val chapterFraction = ((visiblePage + 1).toFloat() / pageCount).coerceIn(0f, 1f)
         val percent = (((state.chapterIndex + chapterFraction) / totalChapters) * 100f).roundToInt().coerceIn(1, 100)
         val progressText = "${(state.chapterIndex + 1).coerceAtMost(totalChapters)} / $totalChapters · $percent%"
-        ReaderChrome(visible = state.chromeVisible, title = chapter.title.ifBlank { "正文" },
-            progressText = progressText, backdrop = backdrop,
-            onClose = onClose, onDirectory = onDirectory, onSettings = onSettings)
+        SideEffect { chromeProgress = progressText }
+    }
+    }
+    ReaderChrome(visible = state.chromeVisible, title = chapter.title.ifBlank { "正文" },
+        progressText = chromeProgress, backdrop = backdrop,
+        onClose = onClose, onDirectory = onDirectory, onSettings = onSettings)
     }
 }
 

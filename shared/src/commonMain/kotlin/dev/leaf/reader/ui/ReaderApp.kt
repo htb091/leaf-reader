@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -39,6 +40,7 @@ import dev.leaf.reader.*
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -59,6 +61,9 @@ fun ReaderApp(store: ReaderStore, onImportRequested: () -> Unit) {
         ReaderTheme.SYSTEM -> if (systemDark) darkColorScheme() else lightColorScheme()
     }
     MiuixTheme(colors = colors) {
+        // Root overlay host is needed by global error dialogs. Child screens may
+        // use their own local hosts, without consuming the window's safe insets.
+        Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) {
         val shelfState = rememberSaveableStateHolder()
         val scope = rememberCoroutineScope()
         val entrance = remember { Animatable(0f) }
@@ -169,6 +174,7 @@ fun ReaderApp(store: ReaderStore, onImportRequested: () -> Unit) {
                     colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.textButtonColorsPrimary(),
                 )
             }
+        }
         }
     }
 }

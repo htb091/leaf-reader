@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.progressiveTextureBlur
+import top.yukonga.miuix.kmp.blur.textureBlur
 import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -114,13 +115,20 @@ internal fun MiuixCircleButton(
 @Composable
 internal fun MiuixDockPill(
     modifier: Modifier = Modifier,
+    backdrop: Backdrop? = null,
+    verticalPadding: Dp = 10.dp,
+    horizontalPadding: Dp = 16.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
+    val shape = RoundedCornerShape(999.dp)
+    val useBlur = backdrop != null && isRuntimeShaderSupported()
+    val material = if (useBlur) Modifier.textureBlur(backdrop, shape, blurRadius = 18f, noiseCoefficient = 0f) else Modifier
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(MiuixTheme.colorScheme.surfaceContainerHigh)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .clip(shape)
+            .then(material)
+            .background(MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = if (useBlur) 0.78f else 1f))
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         content = content,

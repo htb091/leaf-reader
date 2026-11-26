@@ -53,6 +53,10 @@ internal fun contentsChapterPosition(indices: List<Int>, chapterIndex: Int): Int
 internal fun compactContentsLayout(heightDp: Float, fontScale: Float): Boolean =
     heightDp < 520f || heightDp / fontScale.coerceAtLeast(1f) < 480f
 
+// The requested 60dp * 2/3 = 40dp visual density is floored at a 44dp touch target.
+// No maximum height: long titles and Dynamic Type are allowed to grow the row.
+internal const val ContentsRowMinimumHeightDp = 44f
+
 private data class ContentsResult(val query: String, val descending: Boolean, val indices: List<Int>)
 
 /**
@@ -192,7 +196,7 @@ internal fun ContentsScreen(
                 } else {
                     LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         items(result.indices.size, key = { result.indices[it] }) { position ->
                             val index = result.indices[position]
                             ContentsChapterRow(index, titles[index].ifBlank { "第 ${index + 1} 章" },
@@ -243,7 +247,8 @@ private fun ContentsCover(title: String) {
 private fun CurrentContentsChapter(title: String, count: Int?, onClick: () -> Unit, modifier: Modifier) {
     Row(modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
         .background(MiuixTheme.colorScheme.surfaceContainerHigh)
-        .clickable(role = Role.Button, onClick = onClick).heightIn(min = 56.dp).padding(12.dp)
+        .clickable(role = Role.Button, onClick = onClick).heightIn(min = ContentsRowMinimumHeightDp.dp)
+        .padding(horizontal = 12.dp, vertical = 4.dp)
         .semantics { contentDescription = "返回当前章节：$title"; stateDescription = "当前章节" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
@@ -260,15 +265,15 @@ private fun ContentsChapterRow(index: Int, title: String, count: Int?, current: 
     dense: Boolean, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
         .then(if (current) Modifier.background(MiuixTheme.colorScheme.primary.copy(alpha = 0.10f)) else Modifier)
-        .clickable(role = Role.Button, onClick = onClick).heightIn(min = if (dense) 48.dp else 60.dp)
-        .padding(horizontal = 12.dp, vertical = 8.dp)
+        .clickable(role = Role.Button, onClick = onClick).heightIn(min = ContentsRowMinimumHeightDp.dp)
+        .padding(horizontal = 12.dp, vertical = 2.dp)
         .semantics { if (current) stateDescription = "当前章节"; contentDescription = "第 ${index + 1} 项，$title" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text((index + 1).toString(), Modifier.widthIn(min = 28.dp), fontSize = 12.sp,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         Text(title, Modifier.weight(1f), fontSize = 15.sp,
             fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            maxLines = if (dense) 1 else 2, overflow = TextOverflow.Ellipsis,
             color = if (current) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurface)
         count?.let { CountPill("${it}字") }
     }

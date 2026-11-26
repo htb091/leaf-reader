@@ -1,5 +1,12 @@
 # 验证状态
 
+## v0.5（2026-11-26）
+
+- Linux aarch64 / JDK 17 执行 `:shared:desktopTest`：70 项、0 失败、0 错误、0 跳过。其中 4 项是源码结构检查，不是触屏或渲染测试。
+- `scripts/check_project.py` 通过；34 项 Python 打包和升级脚本测试通过。执行 `bash -n` 与 `git diff --check` 通过。
+- 截图灰块与 Miuix 官方文档中透明文字图层模糊产生色块的情形吻合，采样层已补不透明底色；最终因果与视觉修复仍待该设备复测。
+- 没有执行 iOS 编译、真机点击、状态栏、16:9 材质渲染/帧率、VoiceOver 或 IPA 安装。Miuix iOS shader capability 为真并不保证所有 GPU 路径经过验证。
+
 ## v0.4（2026-11-26）
 
 - 本机执行 `bash ./gradlew :shared:desktopTest -PenableApple=false --stacktrace`，构建成功；测试结果 XML 统计 **58 项、0 失败、0 错误、0 跳过**，包含新增目录和阅读控制逻辑测试。

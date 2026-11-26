@@ -1,13 +1,21 @@
 package dev.leaf.reader.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -23,11 +31,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -45,6 +56,8 @@ import dev.leaf.reader.*
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.textureBlur
+import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -74,7 +87,8 @@ internal fun ShelfScreen(
     var headerHeightPx by remember { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState()
     val settingsState = rememberLazyListState()
-    val backdrop = rememberLayerBackdrop()
+    val paper = MiuixTheme.colorScheme.surface
+    val backdrop = rememberLayerBackdrop { drawRect(paper); drawContent() }
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
     val enabled = !state.busy
@@ -127,7 +141,6 @@ internal fun ShelfScreen(
         val provider: () -> Float = { progress.value }
         provider
     }
-    val contentTopPadding = with(density) { headerHeightPx.toDp() } + 10.dp
     val shelfMode = panel == 0
 
     Scaffold(
@@ -136,18 +149,32 @@ internal fun ShelfScreen(
         contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
         floatingToolbarPosition = ToolbarPosition.BottomCenter,
         floatingToolbar = {
-            ShelfDock(panel) { next ->
+            ShelfDock(panel, backdrop) { next ->
                 panel = next
-                searching = false
-                query = ""
                 focusManager.clearFocus()
             }
         },
     ) { insets ->
-        Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
-            // Capture only the pane, as a sibling of the header, to avoid recursive blur.
+        val safeTop = insets.calculateTopPadding()
+        val direction = LocalLayoutDirection.current
+        val contentTopPadding = (with(density) { headerHeightPx.toDp() } - safeTop).coerceAtLeast(0.dp) + 10.dp
+        Box(Modifier.fillMaxSize()) {
+            // Capture an opaque full-window paper, including the status-bar band;
+            // the interactive pane alone is inset. Header and dock stay outside capture.
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                if (shelfMode) {
+                AnimatedContent(
+                    targetState = panel,
+                    modifier = Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
+                    transitionSpec = {
+                        val direction = if (targetState > initialState) 1 else -1
+                        ContentTransform(
+                            targetContentEnter = slideInHorizontally(tween(280, easing = MiuixEaseOut)) { it * direction } + fadeIn(tween(180)),
+                            initialContentExit = slideOutHorizontally(tween(280, easing = MiuixEaseOut)) { -it * direction } + fadeOut(tween(180)),
+                        )
+                    },
+                    label = "shelf-panel",
+                ) { activePanel ->
+                if (activePanel == 0) {
                     ShelfGridPane(
                         books = books,
                         continuing = continuing,
@@ -177,14 +204,20 @@ internal fun ShelfScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
+                }
             }
+            Box(Modifier.fillMaxWidth().padding(
+                start = insets.calculateStartPadding(direction),
+                end = insets.calculateEndPadding(direction),
+            )) {
             ShelfHeader(
                 backdrop = backdrop,
+                safeTop = safeTop,
                 compactTitle = if (shelfMode) "书架" else "设置",
                 largeTitle = if (shelfMode) "书架" else "设置",
                 detail = if (shelfMode) "共 ${state.books.size} 本本地书籍" else "你的书架，你的阅读习惯",
                 showActions = shelfMode,
-                searching = searching,
+                searching = searching && shelfMode,
                 query = query,
                 enabled = enabled,
                 collapseTarget = collapseTarget,
@@ -202,6 +235,7 @@ internal fun ShelfScreen(
                 onQueryChange = { query = it },
                 onCollapseSearch = { query = ""; searching = false; focusManager.clearFocus() },
             )
+            }
         }
         OverlayDialog(
             show = deleting != null,
@@ -227,25 +261,51 @@ internal fun ShelfScreen(
     }
 }
 
-/** Floating dock: Miuix Scaffold placement + FloatingToolbar pill with two dock tabs. */
+/** One compact floating surface with a shared, smoothly moving selection pill. */
 @Composable
-private fun ShelfDock(panel: Int, onSelect: (Int) -> Unit) {
-    FloatingToolbar(
-        color = MiuixTheme.colorScheme.surfaceContainerHigh,
-        cornerRadius = 999.dp,
-        outSidePadding = PaddingValues(horizontal = PageMargin, vertical = 12.dp),
-        shadowElevation = 8.dp,
-        showDivider = true,
+private fun ShelfDock(panel: Int, backdrop: Backdrop?, onSelect: (Int) -> Unit) {
+    val shape = RoundedCornerShape(999.dp)
+    val surface = MiuixTheme.colorScheme.surfaceContainerHigh
+    val material = if (backdrop != null && isRuntimeShaderSupported()) {
+        Modifier.clip(shape).textureBlur(
+            backdrop = backdrop, shape = shape, blurRadius = 18f, noiseCoefficient = 0f,
+        ).background(surface.copy(alpha = 0.78f))
+    } else {
+        Modifier.clip(shape).background(surface)
+    }
+    Box(
+        Modifier.padding(horizontal = 12.dp, vertical = 12.dp)
+            .widthIn(max = 236.dp).fillMaxWidth()
+            .shadow(8.dp, shape).then(material)
+            .padding(4.dp).selectableGroup(),
     ) {
-        MiuixDockPill(modifier = Modifier.selectableGroup()) {
-            DockTab(
-                Glyph.SHELVES, "书架", selected = panel == 0, onClick = { onSelect(0) },
-                modifier = Modifier.semantics { role = Role.Tab; selected = panel == 0 },
+        BoxWithConstraints(Modifier.fillMaxWidth().height(48.dp)) {
+            val tabWidth = maxWidth / 2
+            val indicatorOffset by animateDpAsState(
+                targetValue = if (panel == 0) 0.dp else tabWidth,
+                animationSpec = tween(280, easing = MiuixEaseOut),
+                label = "dock-selection",
             )
-            DockTab(
-                Glyph.GEAR, "设置", selected = panel == 1, onClick = { onSelect(1) },
-                modifier = Modifier.semantics { role = Role.Tab; selected = panel == 1 },
+            Box(
+                Modifier.offset(x = indicatorOffset).width(tabWidth).fillMaxHeight()
+                    .clip(shape).background(MiuixTheme.colorScheme.primary),
             )
+            Row(Modifier.fillMaxSize()) {
+                listOf(Glyph.SHELVES to "书架", Glyph.GEAR to "设置").forEachIndexed { index, (glyph, title) ->
+                    val active = panel == index
+                    val tint = if (active) MiuixTheme.colorScheme.onPrimary else MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    Row(
+                        Modifier.weight(1f).fillMaxHeight().clip(shape)
+                            .selectable(selected = active, role = Role.Tab, onClick = { onSelect(index) }),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        MiuixGlyph(glyph, tint, 20.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(title, color = tint, style = MiuixTheme.textStyles.footnote1, maxLines = 1)
+                    }
+                }
+            }
         }
     }
 }
@@ -257,6 +317,7 @@ private fun ShelfDock(panel: Int, onSelect: (Int) -> Unit) {
 @Composable
 private fun ShelfHeader(
     backdrop: Backdrop,
+    safeTop: Dp,
     compactTitle: String,
     largeTitle: String,
     detail: String,
@@ -278,7 +339,7 @@ private fun ShelfHeader(
     )
     val collapse: () -> Float = { collapseProgress.value }
     GradientHeaderScrim(backdrop = backdrop) {
-        Column(Modifier.fillMaxWidth().onSizeChanged { onHeaderHeight(it.height) }) {
+        Column(Modifier.fillMaxWidth().onSizeChanged { onHeaderHeight(it.height) }.padding(top = safeTop)) {
             Column(Modifier.fillMaxWidth()) {
                 Row(
                     Modifier.fillMaxWidth()

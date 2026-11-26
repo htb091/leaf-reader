@@ -7,10 +7,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -25,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import dev.leaf.reader.*
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
+import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -44,6 +47,7 @@ internal fun ReadingSettings(
         title = null,
         onDismissRequest = onDismiss,
         cornerRadius = 28.dp,
+        renderInRootScaffold = false,
     ) {
         Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))) {
@@ -113,10 +117,33 @@ private fun SettingsSection(title: String, content: @Composable ColumnScope.() -
 
 @Composable
 private fun Choice(label: String, labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MiuixTheme.textStyles.body2)
-        TabRowWithContour(tabs = labels, selectedTabIndex = selected.coerceAtLeast(0),
-            onTabSelected = onSelect, modifier = Modifier.fillMaxWidth(), minWidth = 52.dp, height = 48.dp)
+    var expanded by remember(label) { mutableStateOf(false) }
+    // The parent Box is the real anchor measured by OverlayListPopup's position provider.
+    Box(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
+            .clickable(role = Role.Button) { expanded = true }
+            .semantics { contentDescription = "$label：${labels.getOrNull(selected).orEmpty()}，选择选项" }
+            .padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(label, Modifier.weight(1f), style = MiuixTheme.textStyles.body2, maxLines = 2)
+            Text(labels.getOrNull(selected).orEmpty(), Modifier.weight(1f),
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary, textAlign = TextAlign.End,
+                style = MiuixTheme.textStyles.body2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            DropdownArrowEndAction(actionColor = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        }
+        OverlayListPopup(show = expanded, alignment = PopupPositionProvider.Align.End,
+            enableWindowDim = false, onDismissRequest = { expanded = false },
+            renderInRootScaffold = false) {
+            ListPopupColumn {
+                labels.forEachIndexed { index, title ->
+                    DropdownImpl(text = title, optionSize = labels.size, isSelected = selected == index,
+                        index = index, onSelectedIndexChange = {
+                            expanded = false
+                            onSelect(it)
+                        })
+                }
+            }
+        }
     }
 }
 
@@ -124,16 +151,35 @@ private fun Choice(label: String, labels: List<String>, selected: Int, onSelect:
 private fun StepSetting(label: String, value: Float, minimum: Float, maximum: Float,
     step: Float, unit: String, onChange: (Float) -> Unit) {
     val rounded = (value * 100).toInt() / 100f
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, Modifier.weight(1f), fontSize = 15.sp, maxLines = 1)
-        Text("$rounded$unit", fontSize = 14.sp, maxLines = 1,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+    val controls: @Composable () -> Unit = {
         StepButton("−", "减小$label", enabled = value > minimum) {
             onChange((value - step).coerceAtLeast(minimum))
         }
         StepButton("＋", "增大$label", enabled = value < maximum) {
             onChange((value + step).coerceAtMost(maximum))
+        }
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (stackedReaderSetting(LocalDensity.current.fontScale, maxWidth.value)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(label, Modifier.weight(1f), fontSize = 15.sp, maxLines = 2)
+                    Text("$rounded$unit", fontSize = 14.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                    controls()
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(label, Modifier.weight(1f), fontSize = 15.sp, maxLines = 1)
+                Text("$rounded$unit", fontSize = 14.sp, maxLines = 1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                controls()
+            }
         }
     }
 }
@@ -164,7 +210,7 @@ private fun ToggleSetting(label: String, checked: Boolean, onChange: (Boolean) -
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp)
         .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
         .semantics { contentDescription = label }, verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f), fontSize = 15.sp, maxLines = 1)
+        Text(label, Modifier.weight(1f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Switch(checked = checked, onCheckedChange = null,
             modifier = Modifier.clearAndSetSemantics { })
     }
@@ -175,6 +221,9 @@ private fun SettingsNote(text: String) {
     Text(text, fontSize = 12.sp, lineHeight = 18.sp,
         color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.62f))
 }
+
+internal fun stackedReaderSetting(fontScale: Float, widthDp: Float): Boolean =
+    fontScale > 1.3f || widthDp < 240f
 
 private val SettingsTouchTarget = 48.dp
 
